@@ -8,14 +8,14 @@ from datetime import datetime
 
 # --- CẤU HÌNH TRANG ---
 st.set_page_config(
-    page_title="Bingo Mobile AI 2.0", 
+    page_title="Bingo AI Bulk Import", 
     layout="wide", 
     initial_sidebar_state="collapsed"
 )
 
 DATA_FILE = 'bingo_history.csv'
 
-# --- KHỐI QUẢN LÝ DỮ LIỆU ---
+# --- QUẢN LÝ DỮ LIỆU ---
 def load_data():
     columns = ['draw_id', 'time'] + [f'num_{i}' for i in range(1, 21)] + ['super_num']
     df = pd.DataFrame(columns=columns)
@@ -51,122 +51,121 @@ def delete_all_data():
         return True
     return False
 
-# --- KHỐI TÁCH SỐ THÔNG MINH ---
-def smart_parse_text(text, selected_date):
-    try:
-        clean_text = re.sub(r'\D', ' ', text)
-        numbers = [int(n) for n in clean_text.split() if n.strip()]
-        
-        draw_id = None
-        balls = []
-        super_n = 0
-        
-        potential_ids = [n for n in numbers if n > 100000000]
-        if potential_ids: draw_id = str(potential_ids[0])
-        
-        potential_balls = [n for n in numbers if 1 <= n <= 80]
-        
-        if not draw_id: draw_id = f"Manual-{int(datetime.now().timestamp())}"
-        
-        seen = set()
-        unique_balls = []
-        for x in potential_balls:
-            if x not in seen:
-                unique_balls.append(x)
-                seen.add(x)
-                if len(unique_balls) == 20: break
-        
-        balls = sorted(unique_balls)
-
-        if len(balls) >= 15:
-            super_n = balls[-1] if balls else 0
-            final_time = datetime.combine(selected_date, datetime.now().time())
-            return {'draw_id': draw_id, 'time': final_time, 'nums': balls, 'super_num': super_n}, "OK"
-        else:
-            return None, f"Lỗi: Tìm thấy {len(balls)} số. Hãy Copy lại."
+# ========================================================
+# 🚀 CẢI TIẾN: HÀM ĐỌC ĐA LUỒNG (ĐỌC CẢ BẢNG)
+# ========================================================
+def parse_bulk_text(text, selected_date):
+    """
+    Hàm này sẽ quét từng dòng một để tìm tất cả các kỳ có trong văn bản copy
+    """
+    found_draws = []
+    
+    # 1. Tách văn bản thành từng dòng (dựa vào dấu xuống dòng)
+    lines = text.strip().split('\n')
+    
+    for line in lines:
+        try:
+            # Làm sạch dòng
+            clean_line = re.sub(r'\D', ' ', line)
+            numbers = [int(n) for n in clean_line.split() if n.strip()]
             
-    except Exception as e: return None, str(e)
+            # Bỏ qua dòng quá ngắn (không đủ số liệu)
+            if len(numbers) < 15: continue
+            
+            draw_id = None
+            balls = []
+            super_n = 0
+            
+            # Tìm Mã kỳ (> 100 triệu)
+            potential_ids = [n for n in numbers if n > 100000000]
+            if potential_ids: 
+                draw_id = str(potential_ids[0])
+            else:
+                # Nếu dòng có nhiều số nhưng không có ID, bỏ qua để tránh rác
+                continue
+            
+            # Tìm 20 số (1-80)
+            potential_balls = [n for n in numbers if 1 <= n <= 80]
+            
+            # Lọc trùng giữ thứ tự
+            seen = set()
+            unique_balls = []
+            for x in potential_balls:
+                if x not in seen:
+                    unique_balls.append(x)
+                    seen.add(x)
+                    if len(unique_balls) == 20: break
+            
+            balls = sorted(unique_balls)
+            
+            # Nếu đủ 20 số -> Ghi nhận là 1 kỳ hợp lệ
+            if len(balls) >= 15:
+                super_n = balls[-1] if balls else 0
+                # Giả lập thời gian (vì copy bảng không có giờ cụ thể, ta lấy giờ hiện tại)
+                final_time = datetime.combine(selected_date, datetime.now().time())
+                
+                found_draws.append({
+                    'draw_id': draw_id, 
+                    'time': final_time, 
+                    'nums': balls, 
+                    'super_num': super_n
+                })
+        except:
+            continue
+            
+    # Trả về danh sách các kỳ tìm được (Sắp xếp từ cũ đến mới để lưu cho đúng)
+    # Nhưng khi hiển thị ta cần kỳ mới nhất để phân tích
+    return found_draws
 
-# ========================================================
-# 🚀 NÂNG CẤP: THUẬT TOÁN AI 2.0 (ĐA CHIỀU)
-# ========================================================
+# --- THUẬT TOÁN AI 2.0 (GIỮ NGUYÊN) ---
 def advanced_prediction_v2(df):
     if df.empty: return [], "Chưa có dữ liệu"
     
-    # 1. Chuẩn bị dữ liệu
-    # Lấy 10 kỳ gần nhất (Trend ngắn hạn quan trọng hơn dài hạn)
-    short_term_df = df.head(10)
-    # Lấy kỳ vừa quay xong
+    # Lấy dữ liệu để phân tích (Ưu tiên các kỳ mới nhất vừa nhập)
+    short_term_df = df.head(15) 
     last_draw = [df.iloc[0][f'num_{i}'] for i in range(1, 21)]
     
-    # Tính tần suất trong 10 kỳ gần nhất
     all_short_nums = [n for i in range(1, 21) for n in short_term_df[f'num_{i}']]
     freq_short = pd.Series(all_short_nums).value_counts()
     
     scores = {}
-    
-    # 2. CHẤM ĐIỂM TỪNG SỐ (1-80)
     for n in range(1, 81):
         score = 0
-        
-        # --- TIÊU CHÍ 1: HOT TREND (Số đang vào cầu) ---
-        # Nếu số này xuất hiện nhiều trong 10 kỳ gần đây -> Cộng điểm lớn
         count = freq_short.get(n, 0)
         score += count * 2.0 
-        
-        # --- TIÊU CHÍ 2: CẦU BỆT (Số rơi lại) ---
-        # Nếu số này vừa ra ở kỳ trước -> Cộng điểm cực lớn (Bingo hay bệt)
-        if n in last_draw:
-            score += 4.0
-            
-        # --- TIÊU CHÍ 3: CẦU HÀNG XÓM (Neighbor) ---
-        # Nếu số bên cạnh (n-1 hoặc n+1) vừa ra kỳ trước -> Cộng điểm nhẹ
-        # Ví dụ: Kỳ trước ra 15, thì 14 và 16 có khả năng ra theo
-        if (n-1) in last_draw or (n+1) in last_draw:
-            score += 1.5
-            
-        # --- TIÊU CHÍ 4: NGẪU NHIÊN (Yếu tố may mắn) ---
-        # Cộng thêm một chút random để tránh AI bị cứng nhắc
+        if n in last_draw: score += 4.0 # Bệt
+        if (n-1) in last_draw or (n+1) in last_draw: score += 1.5 # Hàng xóm
         score += random.uniform(0, 1.0)
-        
         scores[n] = score
 
-    # 3. Sắp xếp theo điểm số
     ranked_nums = sorted(scores, key=scores.get, reverse=True)
     
-    # 4. BỘ LỌC CÂN BẰNG (Balance Filter)
-    # Lấy 25 số điểm cao nhất để lọc lại lần cuối lấy 20 số
+    # Bộ lọc cân bằng
     candidates = ranked_nums[:25]
     final_picks = []
-    
-    odd_count = 0  # Đếm số lẻ
-    even_count = 0 # Đếm số chẵn
+    odd_count, even_count = 0, 0
     
     for num in candidates:
         if len(final_picks) == 20: break
-        
-        # Kiểm tra cân bằng chẵn lẻ (Không cho phép quá lệch)
         is_odd = (num % 2 != 0)
-        
-        if is_odd and odd_count < 12: # Không quá 12 số lẻ
+        if is_odd and odd_count < 12:
             final_picks.append(num)
             odd_count += 1
-        elif not is_odd and even_count < 12: # Không quá 12 số chẵn
+        elif not is_odd and even_count < 12:
             final_picks.append(num)
             even_count += 1
             
-    # Nếu lọc xong mà vẫn thiếu (do điều kiện chặt quá), bốc thêm cho đủ 20
     if len(final_picks) < 20:
         remain = [x for x in candidates if x not in final_picks]
         final_picks.extend(remain[:20-len(final_picks)])
         
-    return final_picks, "AI 2.0 Multi-Factor"
+    return final_picks, "AI 2.0 Bulk"
 
 # =================================================
 # GIAO DIỆN CHÍNH
 # =================================================
 
-st.title("🚀 BINGO AI 2.0")
+st.title("📥 BINGO NHẬP LIỆU HÀNG LOẠT")
 
 if 'analysis_result' not in st.session_state: st.session_state['analysis_result'] = None
 if 'text_input_key' not in st.session_state: st.session_state['text_input_key'] = 0
@@ -183,47 +182,68 @@ with st.container(border=True):
             st.session_state['text_input_key'] += 1
             st.rerun()
 
+    st.caption("💡 Mẹo: Bạn có thể copy CẢ BẢNG (nhiều dòng) dán vào đây, máy sẽ tự tách.")
     text_paste = st.text_area(
-        "👇 Dán kết quả vào đây:", 
+        "", 
         height=150, 
-        placeholder="Chạm vào đây -> Chọn 'Dán'...",
+        placeholder="Dán cả bảng kết quả vào đây...",
         key=f"input_{st.session_state['text_input_key']}"
     )
 
-    if st.button("🔥 PHÂN TÍCH (THUẬT TOÁN MỚI)", type="primary", use_container_width=True):
+    if st.button("🔥 LƯU & PHÂN TÍCH TẤT CẢ", type="primary", use_container_width=True):
         if text_paste.strip():
-            res, msg = smart_parse_text(text_paste, input_date)
-            if res:
-                is_duplicate = False
-                if not df.empty and str(res['draw_id']) in df['draw_id'].astype(str).values:
-                    is_duplicate = True
-                    st.toast(f"Kỳ {res['draw_id']} đã có. Đang tính toán lại...", icon="⚠️")
+            # Dùng hàm xử lý đa luồng mới
+            draws_list = parse_bulk_text(text_paste, input_date)
+            
+            if len(draws_list) > 0:
+                count_new = 0
+                latest_draw_id = None
                 
-                if not is_duplicate:
-                    new_row = {'draw_id': res['draw_id'], 'time': res['time']}
-                    for i, n in enumerate(res['nums']): new_row[f'num_{i+1}'] = n
-                    new_row['super_num'] = res['super_num']
+                # Duyệt qua từng kỳ tìm được và lưu
+                for draw in draws_list:
+                    # Kiểm tra trùng
+                    if not df.empty and str(draw['draw_id']) in df['draw_id'].astype(str).values:
+                        continue # Đã có thì bỏ qua
+                    
+                    # Lưu kỳ mới
+                    new_row = {'draw_id': draw['draw_id'], 'time': draw['time']}
+                    for i, n in enumerate(draw['nums']): new_row[f'num_{i+1}'] = n
+                    new_row['super_num'] = draw['super_num']
+                    
+                    # Thêm vào dataframe tạm
                     df = pd.concat([pd.DataFrame([new_row]), df], ignore_index=True)
+                    count_new += 1
+                    
+                    # Cập nhật ID mới nhất để hiển thị phân tích
+                    if latest_draw_id is None or int(draw['draw_id']) > int(latest_draw_id):
+                        latest_draw_id = draw['draw_id']
+                
+                # Lưu file
+                if count_new > 0:
                     save_data(df)
-                    st.success(f"✅ Đã lưu kỳ {res['draw_id']}")
-                
-                # DÙNG THUẬT TOÁN V2 MỚI
+                    st.success(f"✅ Đã thêm thành công {count_new} kỳ mới vào dữ liệu!")
+                else:
+                    st.warning("⚠️ Các kỳ này đã có trong máy rồi, không cần lưu lại.")
+                    # Vẫn lấy ID mới nhất trong đám vừa paste để phân tích
+                    latest_draw_id = draws_list[0]['draw_id']
+
+                # CHẠY PHÂN TÍCH (Dựa trên dữ liệu vừa cập nhật)
                 p_nums, method = advanced_prediction_v2(df)
-                st.session_state['analysis_result'] = {'nums': p_nums, 'ref_id': res['draw_id']}
+                st.session_state['analysis_result'] = {'nums': p_nums, 'ref_id': latest_draw_id}
                 
-                if not is_duplicate:
-                    st.session_state['text_input_key'] += 1
-                    st.rerun()
+                # Xóa ô nhập liệu
+                st.session_state['text_input_key'] += 1
+                st.rerun()
             else:
-                st.error(f"❌ {msg}")
+                st.error("❌ Không đọc được dữ liệu nào. Hãy chắc chắn bạn copy đúng bảng số.")
         else:
-            st.warning("Hãy dán số vào trước!")
+            st.warning("Hãy dán dữ liệu vào trước!")
 
 # --- OUTPUT ---
 if st.session_state['analysis_result']:
     res = st.session_state['analysis_result']
     st.markdown("---")
-    st.header(f"🎯 GỢI Ý (AI 2.0)")
+    st.header(f"🎯 DỰ ĐOÁN (Sau kỳ {res['ref_id']})")
     
     # MENU CHỌN CÁCH CHƠI
     game_modes = {
@@ -237,11 +257,10 @@ if st.session_state['analysis_result']:
     mode = st.selectbox("", list(game_modes.keys()), index=4, label_visibility="collapsed")
     pick_n = game_modes[mode]
     
-    # Lấy số từ kết quả AI V2
     best_picks = res['nums'][:pick_n]
     final_display = sorted(best_picks)
     
-    st.info(f"⚡ Dàn **{pick_n} số** xác suất cao nhất:")
+    st.info(f"⚡ Dàn **{pick_n} số** (AI 2.0):")
     
     cols = st.columns(4)
     for idx, n in enumerate(final_display):
@@ -265,4 +284,5 @@ with st.expander("Lịch sử & Cài đặt"):
             delete_all_data(); st.rerun()
             
     if not df.empty:
+        st.write("10 Kỳ gần nhất trong máy:")
         st.dataframe(df.head(10)[['draw_id', 'super_num']], use_container_width=True, hide_index=True)
