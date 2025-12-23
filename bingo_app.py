@@ -7,13 +7,30 @@ import re
 from datetime import datetime
 
 # ==============================================================================
-# 1. CẤU HÌNH HỆ THỐNG
+# 1. CẤU HÌNH HỆ THỐNG & GIAO DIỆN
 # ==============================================================================
 st.set_page_config(
-    page_title="Bingo Master - Đa Chiến Thuật", 
+    page_title="Bingo Taiwan Hybrid Master", 
     layout="wide", 
     initial_sidebar_state="collapsed"
 )
+
+# CSS Tùy chỉnh: Làm đẹp nút bấm bàn phím số
+st.markdown("""
+<style>
+    /* Style cho nút bấm số trong lưới */
+    div.stButton > button:first-child {
+        min-height: 45px;
+        font-weight: bold;
+        border-radius: 8px;
+    }
+    /* Màu đỏ cho tab đang chọn */
+    .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
+        font-size: 1.2rem;
+        font-weight: bold;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Tên file cơ sở dữ liệu
 DATA_FILE = 'bingo_history.csv'
@@ -22,18 +39,13 @@ DATA_FILE = 'bingo_history.csv'
 # 2. CÁC HÀM XỬ LÝ DỮ LIỆU (DATABASE)
 # ==============================================================================
 def load_data():
-    """
-    Hàm tải dữ liệu từ file CSV.
-    Sắp xếp theo Mã Kỳ (draw_id) từ LỚN đến NHỎ.
-    """
-    # Tạo danh sách tên cột 20 số
+    """Tải dữ liệu và sắp xếp theo Mã Kỳ giảm dần (Mới nhất lên đầu)."""
+    # Tạo danh sách cột
     num_cols = [f'num_{i}' for i in range(1, 21)]
     columns = ['draw_id', 'time'] + num_cols + ['super_num']
     
-    # Tạo bảng rỗng trước
     df = pd.DataFrame(columns=columns)
     
-    # Nếu file đã tồn tại thì đọc nó
     if os.path.exists(DATA_FILE):
         try:
             loaded_df = pd.read_csv(DATA_FILE)
@@ -42,31 +54,26 @@ def load_data():
         except Exception: 
             pass
     
-    # Chuyển đổi draw_id sang số nguyên để sắp xếp cho chuẩn xác
+    # Ép kiểu dữ liệu để tránh lỗi
     if 'draw_id' in df.columns:
         df['draw_id'] = pd.to_numeric(df['draw_id'], errors='coerce')
-    
-    # Chuyển đổi cột thời gian
     if 'time' in df.columns:
         df['time'] = pd.to_datetime(df['time'], errors='coerce')
     
-    # Sắp xếp: Mã kỳ LỚN NHẤT (Mới nhất) lên đầu
+    # Sắp xếp và lọc
     df = df.dropna(subset=['draw_id'])
     df = df.sort_values(by='draw_id', ascending=False)
-    
-    # Xóa trùng lặp mã kỳ
     df = df.drop_duplicates(subset=['draw_id'], keep='first')
     
     return df
 
 def save_data(df):
-    """Lưu dữ liệu xuống file"""
-    # Trước khi lưu, đảm bảo sắp xếp lại lần nữa
+    """Lưu dữ liệu xuống file CSV."""
     df = df.sort_values(by='draw_id', ascending=False)
     df.to_csv(DATA_FILE, index=False)
 
 def delete_last_row():
-    """Xóa kỳ quay mới nhất (dòng đầu tiên)"""
+    """Xóa kỳ mới nhất."""
     df = load_data()
     if not df.empty:
         df = df.iloc[1:]
@@ -75,31 +82,46 @@ def delete_last_row():
     return False
 
 def delete_all_data():
-    """Xóa trắng toàn bộ dữ liệu"""
+    """Xóa tất cả dữ liệu."""
     if os.path.exists(DATA_FILE):
         os.remove(DATA_FILE)
         return True
     return False
 
 # ==============================================================================
-# 3. THUẬT TOÁN ĐỌC DỮ LIỆU WEB (PARSER)
+# 3. QUẢN LÝ TRẠNG THÁI & HÀM HỖ TRỢ NHẬP LIỆU
 # ==============================================================================
+if 'selected_nums' not in st.session_state:
+    st.session_state['selected_nums'] = [] # Danh sách số đang chọn thủ công
+if 'predict_data' not in st.session_state:
+    st.session_state['predict_data'] = None
+if 'selected_algo' not in st.session_state:
+    st.session_state['selected_algo'] = "🔮 AI Master (Tổng Hợp)"
+
+def toggle_number(num):
+    """Hàm bật/tắt chọn số trên bàn phím."""
+    if num in st.session_state['selected_nums']:
+        st.session_state['selected_nums'].remove(num)
+    else:
+        if len(st.session_state['selected_nums']) < 20:
+            st.session_state['selected_nums'].append(num)
+        else:
+            st.toast("⚠️ Chỉ được chọn tối đa 20 số!", icon="🚫")
+
+def clear_selection():
+    """Xóa các số đang chọn."""
+    st.session_state['selected_nums'] = []
+
 def parse_multi_draws(text, selected_date):
-    """
-    Hàm đọc dữ liệu copy từ web.
-    Nhận diện mã kỳ 114xxxxxx và lấy 20 số đi kèm.
-    """
+    """Hàm tách số thông minh từ văn bản copy."""
     results = []
-    
-    # Tìm tất cả mã kỳ (9 chữ số, bắt đầu bằng 114)
     draw_pattern = r'\b114\d{6}\b'
     draw_matches = list(re.finditer(draw_pattern, text))
     
     for i in range(len(draw_matches)):
         try:
-            draw_id = int(draw_matches[i].group()) # Chuyển thành số nguyên
+            draw_id = int(draw_matches[i].group())
             
-            # Xác định vùng chứa số của kỳ này
             start_pos = draw_matches[i].end()
             if i + 1 < len(draw_matches):
                 end_pos = draw_matches[i+1].start()
@@ -107,16 +129,13 @@ def parse_multi_draws(text, selected_date):
             else:
                 segment = text[start_pos:]
             
-            # Lọc lấy các con số trong vùng này
             all_digits = re.findall(r'\d{2}', segment)
-            
             valid_numbers = []
             for n in all_digits:
                 val = int(n)
                 if 1 <= val <= 80:
                     valid_numbers.append(val)
             
-            # Lấy 20 số duy nhất đầu tiên
             unique_nums = []
             for n in valid_numbers:
                 if n not in unique_nums:
@@ -125,151 +144,177 @@ def parse_multi_draws(text, selected_date):
                     break
             
             if len(unique_nums) >= 15:
-                super_n = unique_nums[-1]
-                sorted_nums = sorted(unique_nums)
-                
                 results.append({
                     'draw_id': draw_id,
                     'time': datetime.combine(selected_date, datetime.now().time()),
-                    'nums': sorted_nums,
-                    'super_num': super_n
+                    'nums': sorted(unique_nums),
+                    'super_num': unique_nums[-1]
                 })
         except Exception:
             continue
-            
     return results
 
 # ==============================================================================
-# 4. HỆ THỐNG ĐA THUẬT TOÁN (STRATEGY ENGINE)
+# 4. HỆ THỐNG THUẬT TOÁN (STRATEGY ENGINE)
 # ==============================================================================
-def run_prediction(df, strategy="AI Master"):
-    """
-    Hàm phân tích số dựa trên chiến thuật được chọn.
-    """
-    if df.empty:
-        return []
+def run_prediction(df, strategy):
+    if df.empty: return []
     
-    # Lấy dữ liệu toàn bộ lịch sử để tính tần suất
     all_numbers_history = []
     for i in range(1, 21):
         all_numbers_history.extend(df[f'num_{i}'].tolist())
     freq = pd.Series(all_numbers_history).value_counts()
-    
-    # Lấy kỳ vừa quay xong (để bắt bệt)
     last_draw = [df.iloc[0][f'num_{i}'] for i in range(1, 21)]
     
     scores = {}
+    total_draws = len(df)
     
-    # --- CHIẾN THUẬT 1: AI MASTER (TỔNG HỢP) ---
+    # 1. AI MASTER
     if strategy == "🔮 AI Master (Tổng Hợp)":
-        total_draws = len(df)
         for n in range(1, 81):
-            base_score = freq.get(n, 0)
-            score = base_score * 1.0
-            if n in last_draw: score += (total_draws * 0.05) # Ưu tiên Bệt
-            if (n-1) in last_draw or (n+1) in last_draw: score += (total_draws * 0.02) # Ưu tiên Hàng xóm
+            score = freq.get(n, 0) * 1.0
+            if n in last_draw: score += (total_draws * 0.05)
+            if (n-1) in last_draw or (n+1) in last_draw: score += (total_draws * 0.02)
             score += random.uniform(0, 1.0)
             scores[n] = score
 
-    # --- CHIẾN THUẬT 2: SOI CẦU NÓNG (HOT TREND) ---
+    # 2. SOI CẦU NÓNG
     elif strategy == "🔥 Soi Cầu Nóng (Hot)":
-        # Chỉ quan tâm đến những số ra nhiều nhất
         for n in range(1, 81):
-            # Điểm = Tần suất xuất hiện (Không cộng điểm ngẫu nhiên để thuần Hot)
-            scores[n] = freq.get(n, 0) + (random.random() * 0.1) # Random rất nhỏ để phá hòa
+            scores[n] = freq.get(n, 0) + (random.random() * 0.1)
 
-    # --- CHIẾN THUẬT 3: SOI CẦU LẠNH (NUÔI SỐ) ---
+    # 3. SOI CẦU LẠNH
     elif strategy == "❄️ Soi Cầu Lạnh (Nuôi)":
-        # Tìm những số ÍT ra nhất (Đảo ngược điểm số)
-        max_freq = freq.max()
+        max_f = freq.max()
         for n in range(1, 81):
-            f = freq.get(n, 0)
-            # Tần suất càng thấp, điểm càng cao
-            scores[n] = (max_freq - f) + random.uniform(0, 2.0)
+            scores[n] = (max_f - freq.get(n, 0)) + random.uniform(0, 2.0)
 
-    # --- CHIẾN THUẬT 4: SOI CẦU BỆT (REPEATER) ---
+    # 4. SOI CẦU BỆT
     elif strategy == "♻️ Soi Cầu Bệt (Lại)":
-        # Cực kỳ ưu tiên các số vừa ra ở kỳ trước
         for n in range(1, 81):
-            score = freq.get(n, 0) * 0.1 # Tần suất chỉ đóng vai trò phụ
-            if n in last_draw:
-                score += 1000 # Điểm siêu lớn để chắc chắn lọt Top
-            else:
-                score += random.uniform(0, 5.0)
+            score = freq.get(n, 0) * 0.1
+            if n in last_draw: score += 1000
             scores[n] = score
 
-    # --- CHIẾN THUẬT 5: THẦN SỐ HỌC (PYTHAGORAS) ---
-    elif strategy == "u2728 Thần Số Học (Pythagoras)":
-        # Tính toán dựa trên Ngày/Tháng/Năm/Giờ hiện tại (Vũ trụ)
+    # 5. THẦN SỐ HỌC
+    elif strategy == "✨ Thần Số Học":
         now = datetime.now()
-        # Số chủ đạo ngày hôm nay
-        day_sum = sum(int(digit) for digit in str(now.day) + str(now.month) + str(now.year))
-        hour_seed = now.hour + now.minute
-        
-        # Seed random bằng con số thời gian để tạo ra bộ số "Định mệnh" tại thời điểm bấm nút
-        random.seed(day_sum + hour_seed)
-        
+        seed_val = sum(int(d) for d in str(now.day)+str(now.month)) + now.hour
+        random.seed(seed_val)
         for n in range(1, 81):
-            # Tạo ra bộ số ngẫu nhiên nhưng cố định theo thời gian (Pseudo-random)
-            # Kết hợp nhẹ với tần suất để không quá ảo
-            mystic_score = random.randint(1, 100) 
-            real_score = freq.get(n, 0) * 0.5
-            scores[n] = mystic_score + real_score
-            
-        # Reset seed về mặc định để không ảnh hưởng các hàm khác
+            scores[n] = random.randint(1, 100) + (freq.get(n, 0) * 0.5)
         random.seed(None)
 
-    # Sắp xếp từ điểm cao xuống thấp
-    ranked_numbers = sorted(scores, key=scores.get, reverse=True)
-    return ranked_numbers
+    return sorted(scores, key=scores.get, reverse=True)
 
 # ==============================================================================
-# 5. GIAO DIỆN NGƯỜI DÙNG (UI)
+# 5. GIAO DIỆN NGƯỜI DÙNG (UI CHÍNH)
 # ==============================================================================
 
-st.title("🎲 BINGO TAIWAN - ĐA CHIẾN THUẬT")
+st.title("🎲 BINGO TAIWAN HYBRID SYSTEM")
 
-# Khởi tạo Session State
-if 'predict_data' not in st.session_state:
-    st.session_state['predict_data'] = None
-if 'input_key' not in st.session_state:
-    st.session_state['input_key'] = 0
-if 'selected_algo' not in st.session_state:
-    st.session_state['selected_algo'] = "🔮 AI Master (Tổng Hợp)"
-
-# Tải dữ liệu (Đã được sắp xếp Lớn -> Nhỏ)
+# Tải dữ liệu lịch sử
 df_history = load_data()
 
-# --- KHUNG NHẬP LIỆU ---
+# ==============================================================================
+# KHU VỰC NHẬP LIỆU (SỬ DỤNG TABS)
+# ==============================================================================
 with st.container(border=True):
-    st.subheader("1. DỮ LIỆU ĐẦU VÀO")
-    
-    c1, c2 = st.columns([3, 1])
-    with c1:
-        input_date = st.date_input("Ngày quay:", datetime.now(), label_visibility="collapsed")
-    with c2:
-        if st.button("🗑 Xóa ô nhập", use_container_width=True):
-            st.session_state['input_key'] += 1
-            st.rerun()
-            
-    # Ô nhập liệu văn bản
-    raw_text = st.text_area(
-        "Dán kết quả vào đây:", 
-        height=120,
-        placeholder="Copy bảng kết quả từ web dán vào đây...",
-        key=f"text_input_{st.session_state['input_key']}"
-    )
+    # Tạo 2 Tab riêng biệt
+    tab_manual, tab_paste = st.tabs(["🖱️ BÀN PHÍM SỐ (THỦ CÔNG)", "📋 DÁN TỪ WEB (COPY)"])
 
-    st.write("") 
-    
-    # --- HAI NÚT BẤM ---
-    col_btn_1, col_btn_2 = st.columns(2)
-    
-    # Nút 1: LƯU DỮ LIỆU
-    with col_btn_1:
-        if st.button("💾 LƯU DỮ LIỆU MỚI", type="primary", use_container_width=True):
-            if raw_text.strip():
-                extracted = parse_multi_draws(raw_text, input_date)
+    # --------------------------------------------------------------------------
+    # TAB 1: NHẬP THỦ CÔNG (GRID)
+    # --------------------------------------------------------------------------
+    with tab_manual:
+        st.caption("Chế độ nhập từng số trực tiếp.")
+        
+        # Hàng nhập thông tin kỳ quay
+        tm1, tm2, tm3 = st.columns([2, 2, 1])
+        with tm1:
+            # Gợi ý mã kỳ tiếp theo
+            next_id = ""
+            if not df_history.empty:
+                next_id = str(int(df_history.iloc[0]['draw_id']) + 1)
+            manual_draw_id = st.text_input("Nhập Mã Kỳ Mới:", value=next_id, key="manual_id")
+        with tm2:
+            manual_date = st.date_input("Ngày quay:", datetime.now(), key="manual_date")
+        with tm3:
+            st.write("")
+            st.write("")
+            if st.button("Xóa chọn", key="btn_clear_manual", use_container_width=True):
+                clear_selection()
+                st.rerun()
+
+        st.markdown("---")
+        
+        # Hiển thị số lượng đã chọn
+        cnt = len(st.session_state['selected_nums'])
+        st.markdown(f"**🔢 Đã chọn: <span style='color:red; font-size:1.2em'>{cnt}/20</span> số**", unsafe_allow_html=True)
+
+        # LƯỚI 80 SỐ
+        for row in range(8):
+            cols = st.columns(10)
+            for col in range(10):
+                num = row * 10 + col + 1
+                if num > 80: break
+                
+                with cols[col]:
+                    is_sel = num in st.session_state['selected_nums']
+                    # Nút đỏ nếu chọn, xám nếu không
+                    b_type = "primary" if is_sel else "secondary"
+                    if st.button(f"{num:02d}", key=f"grid_{num}", type=b_type, use_container_width=True):
+                        toggle_number(num)
+                        st.rerun()
+        
+        # Chọn số siêu cấp
+        st.markdown("---")
+        valid_supers = sorted(st.session_state['selected_nums']) if st.session_state['selected_nums'] else range(1, 81)
+        manual_super = st.selectbox("🔥 Số Siêu Cấp:", valid_supers, index=len(valid_supers)-1 if valid_supers else 0)
+        
+        # Nút Lưu Thủ Công
+        if st.button("💾 LƯU KỲ THỦ CÔNG", type="primary", use_container_width=True, key="save_manual"):
+            if not manual_draw_id:
+                st.error("Thiếu mã kỳ!")
+            elif len(st.session_state['selected_nums']) != 20:
+                st.error("Chưa chọn đủ 20 số!")
+            else:
+                if not df_history.empty and int(manual_draw_id) in df_history['draw_id'].values:
+                    st.warning("Mã kỳ này đã tồn tại!")
+                else:
+                    new_row = {
+                        'draw_id': int(manual_draw_id),
+                        'time': datetime.combine(manual_date, datetime.now().time()),
+                        'super_num': manual_super
+                    }
+                    sorted_final = sorted(st.session_state['selected_nums'])
+                    for i, val in enumerate(sorted_final):
+                        new_row[f'num_{i+1}'] = val
+                    
+                    df_history = pd.concat([pd.DataFrame([new_row]), df_history], ignore_index=True)
+                    save_data(df_history)
+                    st.success(f"Đã lưu kỳ {manual_draw_id}!")
+                    clear_selection()
+                    st.rerun()
+
+    # --------------------------------------------------------------------------
+    # TAB 2: DÁN TỪ WEB (COPY-PASTE)
+    # --------------------------------------------------------------------------
+    with tab_paste:
+        st.caption("Chế độ dán hàng loạt bảng kết quả.")
+        
+        tp1, tp2 = st.columns([3, 1])
+        with tp1:
+            paste_date = st.date_input("Ngày dữ liệu:", datetime.now(), key="paste_date")
+        with tp2:
+            if st.button("🗑 Xóa ô dán", key="clear_paste", use_container_width=True):
+                st.rerun()
+                
+        paste_text = st.text_area("Dán kết quả vào đây:", height=200, placeholder="114072xxx ...", key="paste_area")
+        
+        if st.button("💾 XỬ LÝ & LƯU HÀNG LOẠT", type="primary", use_container_width=True, key="save_paste"):
+            if paste_text.strip():
+                extracted = parse_multi_draws(paste_text, paste_date)
                 if extracted:
                     added = 0
                     for item in extracted:
@@ -286,104 +331,103 @@ with st.container(border=True):
                     
                     if added > 0:
                         save_data(df_history)
-                        st.success(f"Đã lưu thành công {added} kỳ mới!")
+                        st.success(f"Đã thêm {added} kỳ mới!")
                         st.rerun()
                     else:
-                        st.warning("Dữ liệu này đã có trong máy rồi!")
+                        st.warning("Dữ liệu đã có sẵn!")
                 else:
-                    st.error("Lỗi: Không đọc được số nào.")
+                    st.error("Không đọc được dữ liệu nào.")
             else:
-                st.warning("Bạn chưa dán nội dung nào cả!")
+                st.warning("Ô nhập liệu trống!")
 
-    # Nút 2: PHÂN TÍCH
-    with col_btn_2:
-        if st.button("🚀 CHẠY PHÂN TÍCH", use_container_width=True):
-            if not df_history.empty:
-                # Chạy phân tích dựa trên Thuật toán đang chọn trong Session State
-                st.session_state['predict_data'] = run_prediction(df_history, st.session_state['selected_algo'])
-                st.toast(f"Đã chạy thuật toán: {st.session_state['selected_algo']}", icon="✅")
-            else:
-                st.error("Chưa có lịch sử để phân tích.")
+# ==============================================================================
+# KHU VỰC PHÂN TÍCH (CHUNG CHO CẢ 2 TAB)
+# ==============================================================================
+st.write("")
+if st.button("🚀 CHẠY PHÂN TÍCH TOÀN BỘ DỮ LIỆU", type="primary", use_container_width=True):
+    if not df_history.empty:
+        st.session_state['predict_data'] = run_prediction(df_history, st.session_state['selected_algo'])
+        st.toast("Đã cập nhật phân tích!", icon="✅")
+    else:
+        st.error("Chưa có lịch sử để phân tích.")
 
-# --- KHUNG CẤU HÌNH CHIẾN THUẬT & KẾT QUẢ ---
+# ==============================================================================
+# HIỂN THỊ KẾT QUẢ & CẤU HÌNH
+# ==============================================================================
 if st.session_state['predict_data'] or not df_history.empty:
     st.markdown("---")
-    st.header("🎯 CẤU HÌNH & KẾT QUẢ")
+    st.subheader("🎯 CẤU HÌNH & DỰ ĐOÁN")
     
-    # --- PHẦN CHỌN THUẬT TOÁN (MỚI) ---
-    col_algo, col_mode = st.columns(2)
+    col_conf1, col_conf2 = st.columns(2)
     
-    with col_algo:
-        # Danh sách thuật toán
-        algo_options = [
+    # Cấu hình Thuật toán
+    with col_conf1:
+        algos = [
             "🔮 AI Master (Tổng Hợp)",
             "🔥 Soi Cầu Nóng (Hot)",
             "❄️ Soi Cầu Lạnh (Nuôi)",
             "♻️ Soi Cầu Bệt (Lại)",
-            "u2728 Thần Số Học (Pythagoras)"
+            "✨ Thần Số Học"
         ]
-        
-        selected_algo = st.selectbox(
-            "🧠 Chọn Thuật Toán Phân Tích:", 
-            algo_options, 
-            index=0
-        )
-        
-        # Nếu người dùng đổi thuật toán, lưu vào session và chạy lại ngay nếu đã có data
-        if selected_algo != st.session_state['selected_algo']:
-            st.session_state['selected_algo'] = selected_algo
+        algo_idx = 0
+        if st.session_state['selected_algo'] in algos:
+            algo_idx = algos.index(st.session_state['selected_algo'])
+            
+        new_algo = st.selectbox("🧠 Chọn Thuật Toán:", algos, index=algo_idx)
+        if new_algo != st.session_state['selected_algo']:
+            st.session_state['selected_algo'] = new_algo
             if not df_history.empty:
-                st.session_state['predict_data'] = run_prediction(df_history, selected_algo)
+                st.session_state['predict_data'] = run_prediction(df_history, new_algo)
                 st.rerun()
 
-    with col_mode:
-        # Menu chọn cách chơi
+    # Cấu hình Cách chơi
+    with col_conf2:
         modes = {
-            "10 Tinh (10 số)": 10, "9 Tinh (9 số)": 9, "8 Tinh (8 số)": 8,
-            "7 Tinh (7 số)": 7, "6 Tinh (6 số)": 6, "5 Tinh (5 số)": 5,
-            "4 Tinh (4 số)": 4, "3 Tinh (3 số)": 3, "2 Tinh (2 số)": 2,
-            "1 Tinh (1 số)": 1, "Dàn 20 số": 20
+            "10 Tinh": 10, "9 Tinh": 9, "8 Tinh": 8, "7 Tinh": 7,
+            "6 Tinh": 6, "5 Tinh": 5, "4 Tinh": 4, "3 Tinh": 3,
+            "2 Tinh": 2, "1 Tinh": 1, "Dàn 20 số": 20
         }
-        mode_name = st.selectbox("🎯 Chọn Cách Đánh:", list(modes.keys()), index=4)
-        pick_count = modes[mode_name]
+        mode_key = st.selectbox("🎯 Chọn Dàn Đánh:", list(modes.keys()), index=4)
+        pick_n = modes[mode_key]
 
-    # --- HIỂN THỊ KẾT QUẢ ---
+    # HIỂN THỊ DÀN SỐ
     if st.session_state['predict_data']:
-        st.markdown(f"### Kết quả từ: **{st.session_state['selected_algo']}**")
+        st.markdown(f"##### Kết quả từ: **{st.session_state['selected_algo']}**")
+        final_nums = sorted(st.session_state['predict_data'][:pick_n])
         
-        final_result = sorted(st.session_state['predict_data'][:pick_count])
-        
-        # Hiển thị số
+        # Grid hiển thị số
         cols = st.columns(5)
-        for idx, num in enumerate(final_result):
+        for idx, n in enumerate(final_nums):
             with cols[idx % 5]:
-                color = "#E74C3C" if num > 40 else "#3498DB"
+                color = "#E74C3C" if n > 40 else "#3498DB"
                 st.markdown(
-                    f"<div style='background-color:{color}; color:white; padding:15px; border-radius:10px; text-align:center; font-weight:bold; font-size:20px; margin-bottom:10px;'>{num:02d}</div>",
+                    f"<div style='background-color:{color}; color:white; padding:12px; border-radius:8px; text-align:center; font-weight:bold; font-size:20px; margin-bottom:8px;'>{n:02d}</div>",
                     unsafe_allow_html=True
                 )
-                
-        # --- THỐNG KÊ CHI TIẾT ---
-        st.markdown("#### 📊 Thống kê dàn số:")
-        tai = len([n for n in final_result if n > 40])
-        xiu = len([n for n in final_result if n <= 40])
-        le = len([n for n in final_result if n % 2 != 0])
-        chan = len([n for n in final_result if n % 2 == 0])
         
-        stat_c1, stat_c2, stat_c3, stat_c4 = st.columns(4)
-        with stat_c1: st.metric("🔴 TÀI", f"{tai}")
-        with stat_c2: st.metric("🔵 XỈU", f"{xiu}")
-        with stat_c3: st.metric("⚡ LẺ", f"{le}")
-        with stat_c4: st.metric("📦 CHẴN", f"{chan}")
+        # Thống kê chi tiết
+        st.markdown("###### 📊 Thống kê dàn số:")
+        t = len([x for x in final_nums if x > 40])
+        x = len([x for x in final_nums if x <= 40])
+        l = len([x for x in final_nums if x % 2 != 0])
+        c = len([x for x in final_nums if x % 2 == 0])
+        
+        sc1, sc2, sc3, sc4 = st.columns(4)
+        sc1.metric("🔴 Tài (>40)", t)
+        sc2.metric("🔵 Xỉu (<=40)", x)
+        sc3.metric("⚡ Lẻ", l)
+        sc4.metric("📦 Chẵn", c)
 
-# --- QUẢN LÝ LỊCH SỬ ---
+# ==============================================================================
+# QUẢN LÝ LỊCH SỬ
+# ==============================================================================
 st.markdown("---")
 with st.expander("📋 LỊCH SỬ KỲ QUAY (MỚI NHẤT TRÊN CÙNG)", expanded=True):
-    col_del_1, col_del_2 = st.columns(2)
-    with col_del_1:
+    cd1, cd2 = st.columns(2)
+    with cd1:
         if st.button("↩️ Xóa kỳ mới nhất"):
             if delete_last_row(): st.rerun()
-    with col_del_2:
+    with cd2:
         if st.button("🧨 Xóa tất cả"):
             if delete_all_data(): st.rerun()
             
@@ -392,9 +436,7 @@ with st.expander("📋 LỊCH SỬ KỲ QUAY (MỚI NHẤT TRÊN CÙNG)", expand
             df_history, 
             use_container_width=True, 
             hide_index=True,
-            column_config={
-                "draw_id": st.column_config.NumberColumn("Mã Kỳ", format="%d")
-            }
+            column_config={"draw_id": st.column_config.NumberColumn("Mã Kỳ", format="%d")}
         )
     else:
-        st.info("Lịch sử trống.")
+        st.info("Chưa có dữ liệu.")
