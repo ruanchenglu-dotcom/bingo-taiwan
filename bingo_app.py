@@ -10,7 +10,7 @@ from datetime import datetime
 # 1. CẤU HÌNH HỆ THỐNG & GIAO DIỆN
 # ==============================================================================
 st.set_page_config(
-    page_title="Bingo Taiwan Hybrid Master", 
+    page_title="Bingo Taiwan Hybrid - 10 Draws", 
     layout="wide", 
     initial_sidebar_state="collapsed"
 )
@@ -155,43 +155,66 @@ def parse_multi_draws(text, selected_date):
     return results
 
 # ==============================================================================
-# 4. HỆ THỐNG THUẬT TOÁN (STRATEGY ENGINE)
+# 4. HỆ THỐNG THUẬT TOÁN (CHỈ PHÂN TÍCH 10 KỲ GẦN NHẤT)
 # ==============================================================================
 def run_prediction(df, strategy):
     if df.empty: return []
     
+    # --- QUAN TRỌNG: CẮT LẤY 10 KỲ GẦN NHẤT ---
+    # df đã được sắp xếp giảm dần (mới nhất ở trên), nên head(10) là 10 kỳ mới nhất
+    recent_df = df.head(10)
+    
+    # Tính toán tần suất CHỈ TRONG 10 kỳ này
     all_numbers_history = []
     for i in range(1, 21):
-        all_numbers_history.extend(df[f'num_{i}'].tolist())
+        all_numbers_history.extend(recent_df[f'num_{i}'].tolist())
+    
+    # Tần suất (Số lần xuất hiện trong 10 kỳ)
     freq = pd.Series(all_numbers_history).value_counts()
+    
+    # Lấy kỳ vừa quay xong (dòng đầu tiên) để bắt cầu bệt
     last_draw = [df.iloc[0][f'num_{i}'] for i in range(1, 21)]
     
     scores = {}
-    total_draws = len(df)
+    
+    # Tổng số kỳ đang xét (Tối đa là 10)
+    window_size = len(recent_df) 
     
     # 1. AI MASTER
     if strategy == "🔮 AI Master (Tổng Hợp)":
         for n in range(1, 81):
-            score = freq.get(n, 0) * 1.0
-            if n in last_draw: score += (total_draws * 0.05)
-            if (n-1) in last_draw or (n+1) in last_draw: score += (total_draws * 0.02)
+            # Điểm cơ bản = Số lần xuất hiện trong 10 kỳ
+            score = freq.get(n, 0) * 1.5
+            
+            # Nếu vừa ra ở kỳ trước -> Cộng điểm lớn (Xu hướng bệt ngắn hạn)
+            if n in last_draw: score += 3.0
+            
+            # Cầu hàng xóm
+            if (n-1) in last_draw or (n+1) in last_draw: score += 1.0
+            
+            # Ngẫu nhiên nhẹ
             score += random.uniform(0, 1.0)
             scores[n] = score
 
-    # 2. SOI CẦU NÓNG
+    # 2. SOI CẦU NÓNG (HOT TREND 10 KỲ)
     elif strategy == "🔥 Soi Cầu Nóng (Hot)":
         for n in range(1, 81):
+            # Chỉ quan tâm con nào ra nhiều nhất trong 10 kỳ qua
             scores[n] = freq.get(n, 0) + (random.random() * 0.1)
 
-    # 3. SOI CẦU LẠNH
+    # 3. SOI CẦU LẠNH (NUÔI SỐ TRONG 10 KỲ)
     elif strategy == "❄️ Soi Cầu Lạnh (Nuôi)":
-        max_f = freq.max()
+        # Tìm con nào xuất hiện ít hoặc chưa xuất hiện trong 10 kỳ này
+        max_f = freq.max() if not freq.empty else 0
         for n in range(1, 81):
-            scores[n] = (max_f - freq.get(n, 0)) + random.uniform(0, 2.0)
+            f = freq.get(n, 0)
+            # Tần suất càng thấp điểm càng cao
+            scores[n] = (max_f - f) + random.uniform(0, 1.5)
 
-    # 4. SOI CẦU BỆT
+    # 4. SOI CẦU BỆT (LẠI)
     elif strategy == "♻️ Soi Cầu Bệt (Lại)":
         for n in range(1, 81):
+            # Điểm chủ yếu dựa vào việc nó có nằm trong kỳ trước hay không
             score = freq.get(n, 0) * 0.1
             if n in last_draw: score += 1000
             scores[n] = score
@@ -202,7 +225,8 @@ def run_prediction(df, strategy):
         seed_val = sum(int(d) for d in str(now.day)+str(now.month)) + now.hour
         random.seed(seed_val)
         for n in range(1, 81):
-            scores[n] = random.randint(1, 100) + (freq.get(n, 0) * 0.5)
+            # Kết hợp tâm linh + tần suất ngắn hạn (10 kỳ)
+            scores[n] = random.randint(1, 100) + (freq.get(n, 0) * 1.0)
         random.seed(None)
 
     return sorted(scores, key=scores.get, reverse=True)
@@ -211,7 +235,7 @@ def run_prediction(df, strategy):
 # 5. GIAO DIỆN NGƯỜI DÙNG (UI CHÍNH)
 # ==============================================================================
 
-st.title("🎲 BINGO TAIWAN HYBRID SYSTEM")
+st.title("🎲 BINGO TAIWAN - 10 DRAWS SYSTEM")
 
 # Tải dữ liệu lịch sử
 df_history = load_data()
@@ -344,10 +368,12 @@ with st.container(border=True):
 # KHU VỰC PHÂN TÍCH (CHUNG CHO CẢ 2 TAB)
 # ==============================================================================
 st.write("")
-if st.button("🚀 CHẠY PHÂN TÍCH TOÀN BỘ DỮ LIỆU", type="primary", use_container_width=True):
+st.markdown("### 📊 PHÂN TÍCH (Dựa trên 10 kỳ gần nhất)")
+
+if st.button("🚀 CHẠY PHÂN TÍCH NGAY", type="primary", use_container_width=True):
     if not df_history.empty:
         st.session_state['predict_data'] = run_prediction(df_history, st.session_state['selected_algo'])
-        st.toast("Đã cập nhật phân tích!", icon="✅")
+        st.toast(f"Đã phân tích 10 kỳ gần nhất theo: {st.session_state['selected_algo']}", icon="✅")
     else:
         st.error("Chưa có lịch sử để phân tích.")
 
@@ -356,7 +382,7 @@ if st.button("🚀 CHẠY PHÂN TÍCH TOÀN BỘ DỮ LIỆU", type="primary", u
 # ==============================================================================
 if st.session_state['predict_data'] or not df_history.empty:
     st.markdown("---")
-    st.subheader("🎯 CẤU HÌNH & DỰ ĐOÁN")
+    st.subheader("🎯 KẾT QUẢ DỰ ĐOÁN")
     
     col_conf1, col_conf2 = st.columns(2)
     
