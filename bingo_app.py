@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 
 # ==============================================================================
-# 1. CẤU HÌNH HỆ THỐNG & GIAO DIỆN
+# 1. CẤU HÌNH HỆ THỐNG & GIAO DIỆN (ĐÃ CHỈNH CSS NÚT CAO & HẸP)
 # ==============================================================================
 st.set_page_config(
     page_title="Bingo Taiwan Hybrid - 10 Draws", 
@@ -15,19 +15,30 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# CSS Tùy chỉnh: Làm đẹp nút bấm bàn phím số
+# CSS Tùy chỉnh: Chỉnh nút bấm thành hình chữ nhật đứng (Cao & Hẹp)
 st.markdown("""
 <style>
     /* Style cho nút bấm số trong lưới */
     div.stButton > button:first-child {
-        min-height: 45px;
+        min-height: 75px;  /* Tăng chiều cao lên 75px */
+        width: 100%;       /* Chiều rộng tự động */
+        margin: 0px 4px;   /* Thêm lề trái phải 4px để ép nút hẹp lại */
         font-weight: bold;
-        border-radius: 8px;
+        border-radius: 10px; /* Bo tròn góc mềm mại hơn */
+        font-size: 22px;     /* Số to hơn cho dễ nhìn */
+        padding: 0px;        /* Bỏ khoảng đệm thừa */
+        line-height: 75px;   /* Căn giữa số theo chiều dọc */
     }
+    
     /* Màu đỏ cho tab đang chọn */
     .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
         font-size: 1.2rem;
         font-weight: bold;
+    }
+    
+    /* Chỉnh lại khoảng cách các cột cho thoáng */
+    [data-testid="column"] {
+        padding: 0px 2px;
     }
 </style>
 """, unsafe_allow_html=True)
