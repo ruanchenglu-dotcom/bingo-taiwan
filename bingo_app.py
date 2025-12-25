@@ -7,7 +7,7 @@ import re
 from collections import Counter
 from datetime import datetime
 import plotly.express as px
-from PIL import Image, ImageEnhance, ImageOps
+from PIL import Image, ImageOps
 import pytesseract
 import cv2
 
@@ -15,22 +15,14 @@ import cv2
 # 1. CẤU HÌNH HỆ THỐNG
 # ==============================================================================
 st.set_page_config(
-    page_title="Bingo Quantum AI - Platinum Fix V3", 
+    page_title="Bingo Quantum AI - V4 Final", 
     layout="wide", 
     initial_sidebar_state="collapsed"
 )
 
-# CSS Tùy chỉnh
 st.markdown("""
 <style>
-    div.stButton > button:first-child {
-        min-height: 65px; width: 100%; margin: 0px 1px;
-        font-weight: bold; border-radius: 6px; font-size: 18px;
-    }
-    .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
-        font-size: 1.1rem; font-weight: bold;
-    }
-    [data-testid="column"] { padding: 0px 2px; }
+    div.stButton > button:first-child { min-height: 65px; width: 100%; margin: 0px 1px; font-weight: bold; border-radius: 6px; font-size: 18px; }
     .anomaly-box-hot { background-color: #ffe6e6; padding: 10px; border-radius: 5px; border-left: 5px solid #ff4b4b; color: #c0392b;}
     .anomaly-box-cold { background-color: #e8f8f5; padding: 10px; border-radius: 5px; border-left: 5px solid #1abc9c; color: #16a085;}
     .kelly-box { background-color: #fff8e1; padding: 15px; border-radius: 8px; border: 2px solid #f1c40f; text-align: center; font-weight: bold; font-size: 18px; }
@@ -40,14 +32,12 @@ st.markdown("""
 DATA_FILE = 'bingo_history.csv'
 
 # ==============================================================================
-# 2. STATE & DATA
+# 2. XỬ LÝ DỮ LIỆU
 # ==============================================================================
 if 'selected_nums' not in st.session_state: st.session_state['selected_nums'] = [] 
-if 'predict_data' not in st.session_state: st.session_state['predict_data'] = None 
-if 'z_score_data' not in st.session_state: st.session_state['z_score_data'] = None 
-if 'selected_algo' not in st.session_state: st.session_state['selected_algo'] = "🔮 AI Master (Tổng Hợp)"
-if 'paste_key_id' not in st.session_state: st.session_state['paste_key_id'] = 0
 if 'ocr_result' not in st.session_state: st.session_state['ocr_result'] = [] 
+if 'predict_data' not in st.session_state: st.session_state['predict_data'] = None
+if 'z_score_data' not in st.session_state: st.session_state['z_score_data'] = None
 
 def load_data():
     num_cols = [f'num_{i}' for i in range(1, 21)]
@@ -76,128 +66,94 @@ def toggle_number(num):
     if num in st.session_state['selected_nums']: st.session_state['selected_nums'].remove(num)
     else:
         if len(st.session_state['selected_nums']) < 20: st.session_state['selected_nums'].append(num)
-        else: st.toast("⚠️ Tối đa 20 số!", icon="🚫")
-
-def clear_selection(): st.session_state['selected_nums'] = []
-def clear_paste_box(): st.session_state['paste_key_id'] += 1
+        else: st.toast("⚠️ Max 20 số!", icon="🚫")
 
 # ==============================================================================
-# 3. OCR & PARSER ENGINE (NÂNG CẤP V3 - XỬ LÝ ẢNH TỐI)
+# 3. CÔNG NGHỆ XỬ LÝ ẢNH V4 (TÁCH NỀN TRẮNG)
 # ==============================================================================
-def preprocess_image(image):
+def preprocess_image_v4(image):
     """
-    Xử lý ảnh chuyên sâu cho Bingo Đài Loan:
-    - Xử lý nền tối (Dark mode web)
-    - Tách số khỏi bóng màu
+    Kỹ thuật tách ngưỡng cao (High Thresholding) để loại bỏ bóng màu.
+    Chỉ giữ lại phần text màu trắng sáng nhất.
     """
-    # 1. Chuyển sang ảnh xám
-    img_cv = np.array(image.convert('RGB'))
-    gray = cv2.cvtColor(img_cv, cv2.COLOR_RGB2GRAY)
+    # 1. Chuyển sang ảnh OpenCV
+    img = np.array(image.convert('RGB'))
     
-    # 2. Thresholding: Tự động phân ngưỡng để tách chữ
-    # Dùng OTSU để tìm ngưỡng tốt nhất
-    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # 2. Phóng to ảnh (Upscale) gấp 2 lần để số rõ hơn
+    height, width = img.shape[:2]
+    img = cv2.resize(img, (width*2, height*2), interpolation=cv2.INTER_CUBIC)
     
-    # 3. Kiểm tra xem ảnh là "Nền đen chữ trắng" hay ngược lại
-    # Đếm số điểm ảnh trắng. Nếu > 50% là trắng -> Nền trắng. Ngược lại là nền đen.
-    # Bingo web thường là nền tối, chữ trắng.
-    white_pixels = np.sum(thresh == 255)
-    total_pixels = thresh.shape[0] * thresh.shape[1]
+    # 3. Chuyển sang ảnh xám
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     
-    # Nếu ảnh là nền tối (ít điểm trắng), ta cần đảo ngược để thành Nền Trắng - Chữ Đen
-    # Vì Tesseract đọc chữ đen trên nền trắng tốt nhất.
-    if white_pixels < total_pixels * 0.5:
-        thresh = cv2.bitwise_not(thresh)
-        
-    return thresh
+    # 4. Tách màu trắng:
+    # Số màu trắng có giá trị màu ~255. Bóng màu xanh/đỏ/xám có giá trị thấp hơn (<150).
+    # Ta đặt ngưỡng 180 để loại bỏ tất cả bóng màu, chỉ giữ lại số.
+    _, thresh = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
+    
+    # 5. Đảo ngược màu (Tesseract thích chữ Đen trên nền Trắng)
+    # Lúc này: Số thành màu Đen, Nền (bóng đã bị xóa) thành màu Trắng.
+    result = cv2.bitwise_not(thresh)
+    
+    return result
 
-def extract_text_from_image(image):
+def extract_text_v4(image):
     try:
-        processed_img = preprocess_image(image)
-        # psm 6: Đọc theo khối văn bản thống nhất (quan trọng cho bảng số)
-        custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789: ' 
-        text = pytesseract.image_to_string(processed_img, config=custom_config)
+        processed_img = preprocess_image_v4(image)
+        # psm 6: Đọc theo khối văn bản thống nhất (dạng bảng)
+        # whitelist: Chỉ cho phép đọc số và dấu hai chấm (cho giờ)
+        config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789: '
+        text = pytesseract.image_to_string(processed_img, config=config)
         return text
     except Exception as e:
-        return f"Error OCR: {e}"
+        return ""
 
-def parse_multi_draws(text, selected_date):
-    """
-    Logic phân tích mới:
-    - Giữ nguyên thứ tự đọc (Trái -> Phải).
-    - Tách số Siêu Cấp dựa trên vị trí cuối cùng.
-    """
+def parse_bingo_results(text, selected_date):
     results = []
+    # Vệ sinh text cơ bản
+    text = text.replace('O', '0').replace('o', '0').replace('l', '1').replace('I', '1')
     
-    # Clean text (Thay thế các ký tự dễ nhầm lẫn)
-    text = text.replace('O', '0').replace('o', '0').replace('l', '1').replace('I', '1').replace('|', '1').replace('S', '5')
+    # Tìm mã kỳ (114xxxxxx)
+    matches = list(re.finditer(r'114\d{6}', text))
     
-    # Tìm các Draw ID (114xxxxxx)
-    matches = list(re.finditer(r'\b114\d{6}\b', text))
-    if not matches: matches = list(re.finditer(r'114\d{6}', text))
-
     for i in range(len(matches)):
         try:
             did_str = matches[i].group()
             did = int(did_str)
             
-            # Vùng text của kỳ này (từ ID này đến ID kia)
+            # Vùng text của kỳ này
             s = matches[i].end()
             e = matches[i+1].start() if i + 1 < len(matches) else len(text)
             seg = text[s:e]
             
-            # Lấy tất cả các con số tìm được trong vùng này, GIỮ NGUYÊN THỨ TỰ
-            # Regex \d{1,2} bắt số từ 1 đến 99
-            raw_nums_str = re.findall(r'\b\d{1,2}\b', seg)
+            # Lấy tất cả số tìm được trong vùng, giữ nguyên thứ tự
+            raw_nums = re.findall(r'\b\d{1,2}\b', seg)
             
-            valid_nums_ordered = []
-            for n_str in raw_nums_str:
-                try:
-                    val = int(n_str)
-                    if 1 <= val <= 80:
-                        valid_nums_ordered.append(val)
-                except: continue
+            valid_nums = []
+            for n in raw_nums:
+                v = int(n)
+                if 1 <= v <= 80: valid_nums.append(v)
             
-            # --- LOGIC TÁCH SỐ SIÊU CẤP ---
-            # Với ảnh bảng kết quả, số siêu cấp luôn nằm cuối cùng bên phải
-            
-            main_20 = []
-            super_n = 0
-            
-            # Nếu đọc được từ 20 số trở lên
-            if len(valid_nums_ordered) >= 20:
-                # 20 số đầu là dãy chính
-                main_20 = valid_nums_ordered[:20]
+            # Logic tách số: 20 số đầu là chính, số thứ 21 là siêu cấp
+            if len(valid_nums) >= 20:
+                main_20 = sorted(list(set(valid_nums[:20])))
+                # Bù số nếu thiếu (do lọc trùng)
+                while len(main_20) < 20: main_20.append(0)
                 
-                # Nếu có số thứ 21, đó chắc chắn là số siêu cấp
-                if len(valid_nums_ordered) > 20:
-                    super_n = valid_nums_ordered[20]
-                else:
-                    # Nếu chỉ đọc được đúng 20 số (có thể sót siêu cấp),
-                    # Tạm thời để siêu cấp là 0 để user tự điền
-                    super_n = 0
-            
-            # Chấp nhận kết quả nếu đọc được ít nhất 15 số (để user sửa)
-            if len(main_20) >= 15:
-                # Sắp xếp lại dãy số chính cho đúng chuẩn Bingo
-                main_20 = sorted(list(set(main_20)))
+                # Số siêu cấp
+                super_n = valid_nums[20] if len(valid_nums) > 20 else (main_20[-1] if main_20[-1]!=0 else 0)
                 
-                # Bù số 0 nếu thiếu (do OCR sót)
-                while len(main_20) < 20:
-                    main_20.append(0)
-                    
                 results.append({
-                    'draw_id': did, 
-                    'time': datetime.combine(selected_date, datetime.now().time()), 
-                    'nums': main_20, 
+                    'draw_id': did,
+                    'time': datetime.combine(selected_date, datetime.now().time()),
+                    'nums': main_20,
                     'super_num': super_n
                 })
         except: continue
-        
     return results
 
 # ==============================================================================
-# 4. MODULE PHÂN TÍCH
+# 4. MODULE PHÂN TÍCH (QUANT)
 # ==============================================================================
 def calculate_z_scores(df):
     if df.empty: return None, [], []
@@ -206,208 +162,150 @@ def calculate_z_scores(df):
     for i in range(1, 21): all_nums.extend(recent[f'num_{i}'].tolist())
     counts = pd.Series(all_nums).value_counts().reindex(range(1, 81), fill_value=0)
     mean = counts.mean(); std = counts.std()
-    z_scores = (counts - mean) / std
-    return z_scores, z_scores[z_scores > 1.5].sort_values(ascending=False), z_scores[z_scores < -1.5].sort_values(ascending=True)
+    z = (counts - mean) / std
+    return z, z[z > 1.5].sort_values(ascending=False), z[z < -1.5].sort_values(ascending=True)
 
-def kelly_criterion_suggestion(win_prob, odds, bankroll):
-    b = odds - 1; p = win_prob; q = 1 - p
-    f = (b * p - q) / b
-    safe_f = max(0, f * 0.5)
-    return safe_f * 100, bankroll * safe_f
+def kelly_suggestion(win_prob, odds, bankroll):
+    f = ((odds - 1) * win_prob - (1 - win_prob)) / (odds - 1)
+    return max(0, f * 0.5) * 100, bankroll * max(0, f * 0.5)
 
-def run_prediction(df, strategy):
+def run_prediction(df, algo):
     if df.empty: return []
     recent = df.head(10)
-    all_nums = []
-    for i in range(1, 21): all_nums.extend(recent[f'num_{i}'].tolist())
-    freq = pd.Series(all_nums).value_counts()
-    last = [df.iloc[0][f'num_{i}'] for i in range(1, 21)]
+    nums = [n for i in range(1,21) for n in recent[f'num_{i}']]
+    freq = pd.Series(nums).value_counts()
+    last = [df.iloc[0][f'num_{i}'] for i in range(1,21)]
     scores = {}
     for n in range(1, 81):
-        if strategy == "🔮 AI Master (Tổng Hợp)":
-            s = freq.get(n, 0) * 1.5
-            if n in last: s += 3.0
-            if (n-1) in last or (n+1) in last: s += 1.0
-            s += random.uniform(0, 1.0)
-            scores[n] = s
-        elif strategy == "🔥 Soi Cầu Nóng (Hot)": scores[n] = freq.get(n, 0) + (random.random() * 0.1)
-        elif strategy == "❄️ Soi Cầu Lạnh (Nuôi)": scores[n] = (freq.max() if not freq.empty else 0 - freq.get(n, 0)) + random.uniform(0, 1.5)
-        elif strategy == "♻️ Soi Cầu Bệt (Lại)": scores[n] = (1000 if n in last else 0) + freq.get(n, 0)*0.1
+        if algo == "🔮 AI Master": 
+            s = freq.get(n,0)*1.5 + (3.0 if n in last else 0) + random.random()
+        else: s = freq.get(n,0) + random.random()
+        scores[n] = s
     return sorted(scores, key=scores.get, reverse=True)
 
 # ==============================================================================
-# 5. GIAO DIỆN CHÍNH
+# 5. GIAO DIỆN NGƯỜI DÙNG
 # ==============================================================================
-st.title("🎲 BINGO QUANTUM - PLATINUM EDITION")
+st.title("🎲 BINGO QUANTUM - V4 FINAL")
 df_history = load_data()
 
-# --- KHU VỰC NHẬP LIỆU ---
 with st.container(border=True):
-    t1, t2, t3 = st.tabs(["📸 QUÉT ẢNH (SCAN)", "🖱️ BÀN PHÍM SỐ", "📋 DÁN (COPY)"])
+    t1, t2, t3 = st.tabs(["📸 QUÉT ẢNH (V4)", "🖱️ NHẬP TAY", "📋 DÁN"])
     
-    # --- TAB 1: SCAN ẢNH (V3) ---
+    # --- TAB SCAN V4 ---
     with t1:
-        st.caption("Upload ảnh chụp bảng kết quả. Hệ thống sẽ tự động tách số siêu cấp.")
-        col_up1, col_up2 = st.columns([2, 1])
-        with col_up1:
-            uploaded_file = st.file_uploader("Chọn ảnh:", type=['png', 'jpg', 'jpeg'])
-            scan_date = st.date_input("Ngày trên ảnh:", datetime.now(), key="scan_date")
+        st.caption("Công nghệ tách nền trắng - Chuyên trị ảnh tối màu.")
+        up_file = st.file_uploader("Upload ảnh:", type=['png','jpg','jpeg'])
+        s_date = st.date_input("Ngày:", datetime.now())
         
-        if uploaded_file is not None:
-            image = Image.open(uploaded_file)
-            st.image(image, caption='Ảnh gốc', use_container_width=True)
+        if up_file and st.button("🔍 QUÉT NGAY", type="primary"):
+            img = Image.open(up_file)
+            st.image(img, caption='Ảnh gốc', width=400)
             
-            if st.button("🔍 BẮT ĐẦU QUÉT SỐ", type="primary"):
-                with st.spinner("AI đang xử lý ảnh nền tối & đọc số..."):
-                    raw_text = extract_text_from_image(image)
-                    extracted_data = parse_multi_draws(raw_text, scan_date)
-                    
-                    if extracted_data:
-                        st.session_state['ocr_result'] = extracted_data
-                        st.success(f"Đã tìm thấy {len(extracted_data)} kỳ quay!")
-                    else:
-                        st.error("Không tìm thấy dữ liệu. Hãy thử chụp gần hơn hoặc cắt bớt phần thừa.")
+            with st.spinner("Đang tách màu và đọc số..."):
+                raw_txt = extract_text_v4(img)
+                # st.code(raw_txt) # Debug text
+                res = parse_bingo_results(raw_txt, s_date)
+                
+                if res:
+                    st.session_state['ocr_result'] = res
+                    st.success(f"Đọc được {len(res)} kỳ!")
+                else:
+                    st.error("Không đọc được. Hãy thử cắt ảnh sát bảng số hơn.")
 
         if st.session_state['ocr_result']:
-            st.markdown("---")
-            st.write("### 📝 Kết quả đọc được (Hãy kiểm tra lại):")
+            st.write("### 📝 Kiểm tra kết quả:")
+            for i, it in enumerate(st.session_state['ocr_result']):
+                with st.expander(f"Kỳ {it['draw_id']} - SC: {it['super_num']}", expanded=True):
+                    c1, c2 = st.columns([4, 1])
+                    n_str = ", ".join(map(str, it['nums']))
+                    new_n = c1.text_area(f"Dãy số:", n_str, key=f"n_{i}")
+                    new_s = c2.number_input(f"Siêu Cấp:", value=it['super_num'], key=f"s_{i}")
+                    
+                    # Update lại
+                    try:
+                        st.session_state['ocr_result'][i]['nums'] = sorted([int(x) for x in new_n.split(',') if x.strip().isdigit()])
+                        st.session_state['ocr_result'][i]['super_num'] = new_s
+                    except: pass
             
-            for i, item in enumerate(st.session_state['ocr_result']):
-                with st.expander(f"Kỳ {item['draw_id']} - Siêu cấp: {item['super_num']}", expanded=True):
-                    c_edit1, c_edit2 = st.columns([3, 1])
-                    with c_edit1:
-                        # Hiển thị input để sửa dãy số
-                        nums_str = ", ".join([str(n) for n in item['nums']])
-                        new_nums_str = st.text_area(f"Dãy số chính (Kỳ {item['draw_id']}):", value=nums_str, key=f"edit_ocr_nums_{i}", height=68)
-                        try:
-                            # Cập nhật lại số khi user sửa
-                            new_nums = sorted([int(n.strip()) for n in new_nums_str.split(',') if n.strip().isdigit()])
-                            st.session_state['ocr_result'][i]['nums'] = new_nums
-                        except: pass
-                    with c_edit2:
-                        # Input sửa số siêu cấp
-                        new_super = st.number_input(f"Số Siêu Cấp:", value=int(item['super_num']), min_value=0, max_value=80, key=f"edit_ocr_super_{i}")
-                        st.session_state['ocr_result'][i]['super_num'] = new_super
-
-            if st.button("💾 LƯU TẤT CẢ VÀO LỊCH SỬ", type="primary", key="save_ocr"):
-                added = 0
-                for item in st.session_state['ocr_result']:
-                    if df_history.empty or item['draw_id'] not in df_history['draw_id'].values:
-                        r = {'draw_id': item['draw_id'], 'time': item['time'], 'super_num': item['super_num']}
-                        for i, v in enumerate(item['nums']): 
-                            if i < 20: r[f'num_{i+1}'] = v
-                        for k in range(len(item['nums']) + 1, 21): r[f'num_{k}'] = 0
+            if st.button("💾 LƯU VÀO LỊCH SỬ"):
+                add_cnt = 0
+                for it in st.session_state['ocr_result']:
+                    if df_history.empty or it['draw_id'] not in df_history['draw_id'].values:
+                        r = {'draw_id': it['draw_id'], 'time': it['time'], 'super_num': it['super_num']}
+                        for k, v in enumerate(it['nums']): 
+                            if k < 20: r[f'num_{k+1}'] = v
+                        for k in range(len(it['nums']), 20): r[f'num_{k+1}'] = 0
                         df_history = pd.concat([pd.DataFrame([r]), df_history], ignore_index=True)
-                        added += 1
-                
-                if added > 0:
-                    save_data(df_history)
-                    st.success(f"Đã lưu thành công {added} kỳ mới!")
-                    st.session_state['ocr_result'] = []
-                    st.rerun()
-                else:
-                    st.warning("Các kỳ này đã có trong lịch sử!")
+                        add_cnt += 1
+                if add_cnt: save_data(df_history); st.success(f"Đã lưu {add_cnt} kỳ!"); st.session_state['ocr_result']=[]; st.rerun()
+                else: st.warning("Dữ liệu đã tồn tại!")
 
-    # --- TAB 2 & 3 GIỮ NGUYÊN ---
+    # --- TAB NHẬP TAY ---
     with t2:
-        c1, c2, c3 = st.columns([2, 2, 1])
-        with c1: nid = str(int(df_history['draw_id'].max()) + 1) if not df_history.empty else ""; mid = st.text_input("Mã Kỳ:", value=nid, key="mid")
-        with c2: mdate = st.date_input("Ngày:", datetime.now(), key="mdate")
-        with c3: st.write(""); st.write(""); st.button("Xóa chọn", key="b_clr", on_click=clear_selection)
-        st.markdown(f"**🔢 Đã chọn: <span style='color:red'>{len(st.session_state['selected_nums'])}/20</span>**", unsafe_allow_html=True)
+        c1, c2, c3 = st.columns([2,2,1])
+        nid = str(int(df_history['draw_id'].max()) + 1) if not df_history.empty else ""
+        mid = c1.text_input("Mã Kỳ:", value=nid)
+        mdate = c2.date_input("Ngày:", datetime.now(), key="d2")
+        if c3.button("Xóa"): st.session_state['selected_nums'] = []
+        
+        st.markdown(f"**Chọn: {len(st.session_state['selected_nums'])}/20**")
         for r in range(8):
             cols = st.columns(10)
             for c in range(10):
                 n = r*10 + c + 1
-                with cols[c]:
-                    sel = n in st.session_state['selected_nums']
-                    if st.button(f"{n:02d}", key=f"g_{n}", type="primary" if sel else "secondary"): toggle_number(n); st.rerun()
-        st.markdown("---")
-        v_supers = sorted(st.session_state['selected_nums']) if st.session_state['selected_nums'] else range(1, 81)
-        msuper = st.selectbox("🔥 Siêu Cấp:", v_supers, key="msup")
-        if st.button("💾 LƯU THỦ CÔNG", type="primary"):
-            if not mid or len(st.session_state['selected_nums']) != 20: st.error("Lỗi nhập liệu!")
-            elif not df_history.empty and int(mid) in df_history['draw_id'].values: st.warning("Đã tồn tại!")
-            else:
-                row = {'draw_id': int(mid), 'time': datetime.combine(mdate, datetime.now().time()), 'super_num': msuper}
-                for i, v in enumerate(sorted(st.session_state['selected_nums'])): row[f'num_{i+1}'] = v
-                save_data(pd.concat([pd.DataFrame([row]), df_history], ignore_index=True)); st.success("Đã lưu!"); clear_selection(); st.rerun()
+                bg = "primary" if n in st.session_state['selected_nums'] else "secondary"
+                if cols[c].button(f"{n:02d}", key=f"b{n}", type=bg): toggle_number(n); st.rerun()
+        
+        sup = st.selectbox("Siêu Cấp:", sorted(st.session_state['selected_nums']) if st.session_state['selected_nums'] else range(1,81))
+        if st.button("LƯU TAY", type="primary"):
+            r = {'draw_id': int(mid) if mid else 0, 'time': datetime.combine(mdate, datetime.now().time()), 'super_num': sup}
+            for i,v in enumerate(sorted(st.session_state['selected_nums'])): r[f'num_{i+1}'] = v
+            save_data(pd.concat([pd.DataFrame([r]), df_history], ignore_index=True)); st.success("Lưu!"); st.rerun()
 
+    # --- TAB DÁN ---
     with t3:
-        c1, c2 = st.columns([3, 1])
-        with c1: pdate = st.date_input("Ngày:", datetime.now(), key="pdate")
-        with c2: st.button("🗑 Xóa ô dán", on_click=clear_paste_box, use_container_width=True)
-        ptext = st.text_area("Dán dữ liệu:", height=150, key=f"parea_{st.session_state['paste_key_id']}")
-        if st.button("💾 XỬ LÝ & LƯU", type="primary"):
-            results = []
-            matches = list(re.finditer(r'\b114\d{6}\b', ptext))
-            for i in range(len(matches)):
-                try:
-                    did = int(matches[i].group()); s = matches[i].end(); e = matches[i+1].start() if i + 1 < len(matches) else len(ptext)
-                    nums = sorted(list(set([int(n) for n in re.findall(r'\d{2}', ptext[s:e]) if 1 <= int(n) <= 80]))[:20])
-                    if len(nums) >= 15: results.append({'draw_id': did, 'time': datetime.combine(pdate, datetime.now().time()), 'nums': nums, 'super_num': nums[-1]})
-                except: continue
-            if results:
-                added = 0
-                for it in results:
+        txt = st.text_area("Dán text:", height=150)
+        if st.button("XỬ LÝ TEXT"):
+            res = parse_bingo_results(txt, datetime.now())
+            if res:
+                cnt = 0
+                for it in res:
                     if df_history.empty or it['draw_id'] not in df_history['draw_id'].values:
                         r = {'draw_id': it['draw_id'], 'time': it['time'], 'super_num': it['super_num']}
-                        for i, v in enumerate(it['nums']): r[f'num_{i+1}'] = v
-                        df_history = pd.concat([pd.DataFrame([r]), df_history], ignore_index=True); added += 1
-                if added: save_data(df_history); st.success(f"Thêm {added} kỳ!"); st.rerun()
-                else: st.warning("Dữ liệu cũ!")
-            else: st.error("Lỗi dữ liệu!")
+                        for k,v in enumerate(it['nums']): r[f'num_{k+1}'] = v
+                        df_history = pd.concat([pd.DataFrame([r]), df_history], ignore_index=True); cnt+=1
+                if cnt: save_data(df_history); st.success(f"Thêm {cnt} kỳ!"); st.rerun()
 
-# --- KHU VỰC PHÂN TÍCH ---
-st.write(""); st.markdown("### 📊 PHÂN TÍCH ĐỊNH LƯỢNG (QUANTITATIVE)")
-if st.button("🚀 CHẠY PHÂN TÍCH TOÀN DIỆN", type="primary"):
-    if not df_history.empty:
-        st.session_state['predict_data'] = run_prediction(df_history, st.session_state['selected_algo'])
-        st.session_state['z_score_data'] = calculate_z_scores(df_history)
-        st.toast("Phân tích hoàn tất!", icon="✅")
-    else: st.error("Chưa có dữ liệu.")
-
-if st.session_state['predict_data'] or not df_history.empty:
-    st.markdown("---")
-    rt1, rt2 = st.tabs(["📉 PHÂN TÍCH Z-SCORE", "🎯 DỰ ĐOÁN & KELLY"])
-    with rt1:
-        st.subheader("🔍 Tìm Kiếm Sự Dị Biệt")
-        if st.session_state['z_score_data']:
-            z_all, hots, colds = st.session_state['z_score_data']
-            c_hot, c_cold = st.columns(2)
-            with c_hot:
-                st.markdown("#### 🔥 SỐ 'NÓNG' (Z > 1.5)")
-                if not hots.empty:
-                    for n, score in hots.items(): st.markdown(f"<div class='anomaly-box-hot'>🔴 Số <b>{n:02d}</b> (Z: {score:.2f})</div>", unsafe_allow_html=True)
-                else: st.info("Không có.")
-            with c_cold:
-                st.markdown("#### ❄️ SỐ 'LẠNH' (Z < -1.5)")
-                if not colds.empty:
-                    for n, score in colds.items(): st.markdown(f"<div class='anomaly-box-cold'>🔵 Số <b>{n:02d}</b> (Z: {score:.2f})</div>", unsafe_allow_html=True)
-                else: st.info("Không có.")
-            st.plotly_chart(px.bar(x=z_all.index, y=z_all.values, labels={'x': 'Số', 'y': 'Z-Score'}, color=z_all.values, color_continuous_scale='RdBu_r'), use_container_width=True)
-        else: st.info("Chưa chạy phân tích.")
-
-    with rt2:
-        c1, c2 = st.columns([2, 1])
-        with c1:
-            st.subheader("KẾT QUẢ DỰ ĐOÁN")
-            salgo = st.selectbox("Thuật toán:", ["🔮 AI Master (Tổng Hợp)", "🔥 Soi Cầu Nóng (Hot)", "❄️ Soi Cầu Lạnh (Nuôi)", "♻️ Soi Cầu Bệt (Lại)"])
-            if salgo != st.session_state['selected_algo']: st.session_state['selected_algo'] = salgo; st.session_state['predict_data'] = run_prediction(df_history, salgo); st.rerun()
-            smode = st.selectbox("Dàn:", {"10 Tinh": 10, "6 Tinh": 6, "1 Tinh": 1}.keys(), index=1)
-            if st.session_state['predict_data']:
-                fnums = sorted(st.session_state['predict_data'][:{"10 Tinh": 10, "6 Tinh": 6, "1 Tinh": 1}[smode]])
-                cols = st.columns(5)
-                for i, n in enumerate(fnums): cols[i%5].markdown(f"<div style='background-color:{'#E74C3C' if n>40 else '#3498DB'}; color:white; padding:10px; border-radius:5px; text-align:center; font-weight:bold; font-size:20px; margin-bottom:5px'>{n:02d}</div>", unsafe_allow_html=True)
-        with c2:
-            st.subheader("💰 QUẢN LÝ VỐN (KELLY)")
-            my_money = st.number_input("Vốn (Đài tệ):", value=10000, step=1000)
-            win_rate = 0.35 if smode == "6 Tinh" else 0.55; odds = 4.0 if smode == "6 Tinh" else 2.0
-            k_pct, k_mon = kelly_criterion_suggestion(win_rate, odds, my_money)
-            if k_pct > 0: st.markdown(f"<div class='kelly-box'>💡 GỢI Ý:<br><span style='color:#e67e22'>{k_pct:.1f}% Vốn</span><br><span style='color:#27ae60'>${k_mon:,.0f} TWD</span></div>", unsafe_allow_html=True)
-            else: st.warning("Bảo toàn vốn.")
-
+# --- PHÂN TÍCH ---
 st.markdown("---")
-with st.expander("LỊCH SỬ"):
-    if st.button("Xóa kỳ cuối"): delete_last_row(); st.rerun()
-    if not df_history.empty: st.dataframe(df_history, use_container_width=True, hide_index=True)
+if st.button("🚀 PHÂN TÍCH Z-SCORE & KELLY", type="primary"):
+    st.session_state['predict_data'] = run_prediction(df_history, "🔮 AI Master")
+    st.session_state['z_score_data'] = calculate_z_scores(df_history)
+
+if st.session_state['predict_data']:
+    z, hot, cold = st.session_state['z_score_data']
+    c1, c2 = st.columns(2)
+    with c1:
+        st.write("#### 🔥 SỐ NÓNG (Z>1.5)")
+        if not hot.empty: 
+            for n,s in hot.items(): st.markdown(f"<div class='anomaly-box-hot'>🔴 {n:02d} (Z:{s:.2f})</div>", unsafe_allow_html=True)
+    with c2:
+        st.write("#### ❄️ SỐ LẠNH (Z<-1.5)")
+        if not cold.empty:
+            for n,s in cold.items(): st.markdown(f"<div class='anomaly-box-cold'>🔵 {n:02d} (Z:{s:.2f})</div>", unsafe_allow_html=True)
+            
+    st.markdown("---")
+    c3, c4 = st.columns(2)
+    with c3:
+        st.write("#### 💰 KELLY (Vốn 10k, Win 55%)")
+        kp, km = kelly_suggestion(0.55, 2.0, 10000)
+        st.markdown(f"<div class='kelly-box'>{kp:.1f}% Vốn<br>${km:,.0f} TWD</div>", unsafe_allow_html=True)
+    with c4:
+        st.write("#### 🎯 DỰ ĐOÁN 10 SỐ")
+        top10 = list(st.session_state['predict_data'])[:10]
+        st.write(", ".join([f"{x:02d}" for x in sorted(top10)]))
+
+with st.expander("Lịch sử"):
+    if st.button("Xóa cuối"): delete_last_row(); st.rerun()
+    st.dataframe(df_history, use_container_width=True)
