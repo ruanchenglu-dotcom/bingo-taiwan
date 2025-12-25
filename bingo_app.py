@@ -15,7 +15,7 @@ import cv2
 # 1. CẤU HÌNH HỆ THỐNG
 # ==============================================================================
 st.set_page_config(
-    page_title="Bingo Quantum AI - V4 Final", 
+    page_title="Bingo Quantum AI - V5 HSV", 
     layout="wide", 
     initial_sidebar_state="collapsed"
 )
@@ -69,52 +69,67 @@ def toggle_number(num):
         else: st.toast("⚠️ Max 20 số!", icon="🚫")
 
 # ==============================================================================
-# 3. CÔNG NGHỆ XỬ LÝ ẢNH V4 (TÁCH MÀU TRẮNG)
+# 3. CÔNG NGHỆ XỬ LÝ ẢNH V5 (HSV COLOR FILTER)
 # ==============================================================================
-def preprocess_image_v4(image):
+def preprocess_image_v5(image, debug_mode=False):
     """
-    Chiến thuật V4: Chỉ giữ lại màu trắng (số), xóa bỏ mọi màu khác (bóng, lửa, nền).
+    Chiến thuật V5: Chuyển sang hệ màu HSV và lọc bỏ màu sắc.
+    Chỉ giữ lại điểm ảnh có độ bão hòa (Saturation) thấp và độ sáng (Value) cao.
     """
-    # 1. Chuyển ảnh sang dạng mảng số (OpenCV)
+    # 1. Convert PIL to OpenCV
     img = np.array(image.convert('RGB'))
     
-    # 2. Phóng to ảnh gấp 2 lần (Upscale) để số rõ nét hơn
-    # Kỹ thuật này giúp máy đọc được các số nhỏ bị nhòe
-    img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+    # 2. Upscale (Phóng to 2x)
+    img = cv2.resize(img, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
     
-    # 3. Chuyển sang ảnh xám
-    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    # 3. Chuyển sang không gian màu HSV (Hue, Saturation, Value)
+    hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
     
-    # 4. LỌC MÀU (QUAN TRỌNG NHẤT):
-    # Trong ảnh xám: Màu trắng = 255, Màu bóng đỏ/xanh = ~50-100.
-    # Ta đặt ngưỡng (Threshold) là 180. 
-    # Mọi thứ tối hơn 180 (bóng, nền, lửa) sẽ biến thành ĐEN (0).
-    # Chỉ có số (màu trắng > 180) mới được giữ lại.
-    _, thresh = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
+    # 4. TẠO MẶT NẠ (MASK) ĐỂ LỌC SỐ TRẮNG
+    # Màu trắng có đặc điểm: Saturation (Độ đậm màu) rất thấp, Value (Độ sáng) rất cao.
+    # Ngọn lửa/Bóng màu: Saturation rất cao -> Sẽ bị loại bỏ.
     
-    # 5. Đảo ngược màu: Tesseract thích đọc Chữ Đen trên Nền Trắng.
-    # Sau bước này, ta có một tờ giấy trắng tinh với các con số màu đen.
-    result = cv2.bitwise_not(thresh)
+    # Ngưỡng dưới: S=0 (không màu), V=130 (khá sáng)
+    lower_white = np.array([0, 0, 130]) 
+    # Ngưỡng trên: H=180 (mọi màu), S=60 (chỉ chấp nhận hơi ám màu tí xíu), V=255 (sáng nhất)
+    upper_white = np.array([180, 80, 255])
     
+    mask = cv2.inRange(hsv, lower_white, upper_white)
+    
+    # 5. Khử nhiễu (Dọn sạch các đốm trắng nhỏ do viền bóng tạo ra)
+    # Morphological Opening
+    kernel = np.ones((2,2), np.uint8)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    
+    # 6. Đảo ngược để chữ Đen nền Trắng (Tesseract thích cái này)
+    result = cv2.bitwise_not(mask)
+    
+    # 7. Thêm viền trắng xung quanh để số không bị sát mép
+    result = cv2.copyMakeBorder(result, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255)
+
     return result
 
-def extract_text_v4(image):
+def extract_text_v5(image, debug_mode=False):
     try:
-        processed_img = preprocess_image_v4(image)
-        # psm 6: Chế độ đọc khối văn bản thống nhất (dạng bảng)
-        # whitelist: Chỉ cho phép nhận diện số và ký tự cần thiết
+        processed_img = preprocess_image_v5(image, debug_mode)
+        
+        # Nếu bật chế độ Debug, hiển thị ảnh đã xử lý ra màn hình
+        if debug_mode:
+            st.image(processed_img, caption="Ảnh máy tính 'nhìn thấy' (Sau khi lọc màu)", use_container_width=True)
+            
         config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789: '
         text = pytesseract.image_to_string(processed_img, config=config)
         return text
     except Exception as e:
-        return ""
+        return f"Error: {e}"
 
 def parse_bingo_results(text, selected_date):
     results = []
-    # Vệ sinh text: Sửa các lỗi đọc nhầm phổ biến
+    # Vệ sinh text cực mạnh
     text = text.replace('O', '0').replace('o', '0').replace('l', '1').replace('I', '1').replace('|', '1')
+    text = text.replace('S', '5').replace('B', '8').replace('G', '6')
     
-    # Tìm mã kỳ (114xxxxxx)
+    # Tìm mã kỳ 114...
     matches = list(re.finditer(r'114\d{6}', text))
     
     for i in range(len(matches)):
@@ -122,12 +137,10 @@ def parse_bingo_results(text, selected_date):
             did_str = matches[i].group()
             did = int(did_str)
             
-            # Xác định vùng chứa số của kỳ này
             s = matches[i].end()
             e = matches[i+1].start() if i + 1 < len(matches) else len(text)
             seg = text[s:e]
             
-            # Tìm tất cả các số trong vùng đó (Giữ nguyên thứ tự)
             raw_nums = re.findall(r'\b\d{1,2}\b', seg)
             
             valid_nums = []
@@ -135,25 +148,35 @@ def parse_bingo_results(text, selected_date):
                 v = int(n)
                 if 1 <= v <= 80: valid_nums.append(v)
             
-            # --- LOGIC TÁCH SỐ SIÊU CẤP ---
-            # Ảnh của bạn có 20 số bên trái và 1 số siêu cấp bên phải.
-            # Tổng cộng máy sẽ đọc được khoảng 21 số.
-            
-            if len(valid_nums) >= 20:
-                # 20 số đầu tiên là dãy số chính
-                main_20 = valid_nums[:20]
+            if len(valid_nums) >= 15: # Chấp nhận nếu đọc được ít nhất 15 số
+                # Tách số siêu cấp (số cuối cùng)
+                # Logic: Nếu đọc đủ 21 số trở lên thì số cuối là siêu cấp
+                # Nếu chỉ đọc 20 số, có thể số siêu cấp bị sót, tạm lấy số cuối
                 
-                # Số thứ 21 (nếu có) chính là Siêu Cấp
-                super_n = valid_nums[20] if len(valid_nums) > 20 else 0
+                # Để an toàn: Lấy 20 số đầu tiên làm main, số thứ 21 (nếu có) là super
+                main_temp = []
+                super_n = 0
                 
-                # Nếu không đọc được số thứ 21, thử lấy số cuối cùng của dãy làm siêu cấp tạm thời
-                if super_n == 0 and len(main_20) == 20:
-                     # Đây là trường hợp rủi ro, nhưng tốt hơn là để 0
-                     pass 
-
-                # Sắp xếp 20 số chính cho đúng chuẩn
-                main_20 = sorted(list(set(main_20)))
-                # Bù số 0 nếu thiếu
+                # Loại bỏ trùng lặp nhưng giữ thứ tự
+                seen = set()
+                ordered_unique = []
+                for x in valid_nums:
+                    if x not in seen:
+                        ordered_unique.append(x)
+                        seen.add(x)
+                
+                if len(ordered_unique) >= 20:
+                    main_temp = ordered_unique[:20]
+                    if len(ordered_unique) > 20:
+                        super_n = ordered_unique[20]
+                    else:
+                        super_n = 0 # Thiếu số siêu cấp
+                else:
+                    main_temp = ordered_unique # Lấy hết
+                    super_n = 0
+                
+                # Sort lại 20 số chính
+                main_20 = sorted(main_temp)
                 while len(main_20) < 20: main_20.append(0)
                 
                 results.append({
@@ -199,31 +222,39 @@ def run_prediction(df, algo):
 # ==============================================================================
 # 5. GIAO DIỆN NGƯỜI DÙNG
 # ==============================================================================
-st.title("🎲 BINGO QUANTUM - V4 FINAL")
+st.title("🎲 BINGO QUANTUM - V5 HSV")
 df_history = load_data()
 
 with st.container(border=True):
-    t1, t2, t3 = st.tabs(["📸 QUÉT ẢNH (V4)", "🖱️ NHẬP TAY", "📋 DÁN"])
+    t1, t2, t3 = st.tabs(["📸 QUÉT ẢNH (V5)", "🖱️ NHẬP TAY", "📋 DÁN"])
     
-    # --- TAB SCAN V4 ---
+    # --- TAB SCAN V5 ---
     with t1:
-        st.caption("Công nghệ tách nền trắng - Chuyên trị ảnh tối màu & bóng lửa.")
-        up_file = st.file_uploader("Upload ảnh:", type=['png','jpg','jpeg'])
-        s_date = st.date_input("Ngày:", datetime.now())
+        st.caption("Công nghệ HSV Filter: Lọc bỏ bóng màu và lửa, chỉ giữ số trắng.")
         
-        if up_file and st.button("🔍 QUÉT NGAY (V4)", type="primary"):
+        c_scan1, c_scan2 = st.columns([2, 1])
+        with c_scan1:
+            up_file = st.file_uploader("Upload ảnh:", type=['png','jpg','jpeg'])
+            s_date = st.date_input("Ngày:", datetime.now())
+        with c_scan2:
+            st.write("")
+            st.write("")
+            debug_chk = st.checkbox("🛠 Chế độ Debug (Xem ảnh máy đọc)")
+            st.caption("Bật cái này lên để xem tại sao máy đọc sai (nếu có).")
+        
+        if up_file and st.button("🔍 QUÉT NGAY (V5)", type="primary"):
             img = Image.open(up_file)
             st.image(img, caption='Ảnh gốc', width=400)
             
-            with st.spinner("Đang lọc bỏ màu bóng và lửa..."):
-                raw_txt = extract_text_v4(img)
+            with st.spinner("Đang lọc quang phổ HSV..."):
+                raw_txt = extract_text_v5(img, debug_chk) # Truyền biến debug vào
                 res = parse_bingo_results(raw_txt, s_date)
                 
                 if res:
                     st.session_state['ocr_result'] = res
-                    st.success(f"Thành công! Đọc được {len(res)} kỳ.")
+                    st.success(f"Tuyệt vời! Đọc được {len(res)} kỳ.")
                 else:
-                    st.error("Không đọc được. Hãy thử cắt ảnh sát bảng số hơn.")
+                    st.error("Vẫn chưa đọc được. Hãy bật 'Chế độ Debug' xem ảnh bị đen hay trắng quá không?")
 
         if st.session_state['ocr_result']:
             st.write("### 📝 Kiểm tra kết quả:")
@@ -234,7 +265,6 @@ with st.container(border=True):
                     new_n = c1.text_area(f"Dãy số:", n_str, key=f"n_{i}")
                     new_s = c2.number_input(f"Siêu Cấp:", value=it['super_num'], key=f"s_{i}")
                     
-                    # Update lại
                     try:
                         st.session_state['ocr_result'][i]['nums'] = sorted([int(x) for x in new_n.split(',') if x.strip().isdigit()])
                         st.session_state['ocr_result'][i]['super_num'] = new_s
