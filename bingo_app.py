@@ -15,7 +15,7 @@ import cv2
 # ==============================================================================
 # 1. CẤU HÌNH & HỆ THỐNG
 # ==============================================================================
-st.set_page_config(page_title="Bingo AI - V10 Ultimate", layout="wide")
+st.set_page_config(page_title="Bingo AI - V11 Full Option", layout="wide")
 
 st.markdown("""
 <style>
@@ -36,7 +36,7 @@ def check_tesseract():
     return True, "✅ System OK"
 
 # ==============================================================================
-# 2. XỬ LÝ ẢNH (V9 - CÔNG NGHỆ LỌC MÀU TỐT NHẤT)
+# 2. XỬ LÝ ẢNH (GIỮ NGUYÊN CÔNG NGHỆ V9 TỐT NHẤT)
 # ==============================================================================
 def preprocess_image_v9(image):
     # Upscale & HSV Filter (Lọc trắng - loại bỏ bóng/lửa)
@@ -57,10 +57,7 @@ def preprocess_image_v9(image):
 def extract_text_v9(image):
     try:
         processed_img = preprocess_image_v9(image)
-        # Hiển thị ảnh debug nhỏ để người dùng biết máy nhìn thấy gì
         st.image(processed_img, caption="Ảnh máy tính đọc (Đã lọc sạch màu)", width=400)
-        
-        # Cấu hình OCR: preserve_interword_spaces=1 để giữ khoảng cách số
         config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789: preserve_interword_spaces=1'
         text = pytesseract.image_to_string(processed_img, config=config)
         return text
@@ -68,21 +65,17 @@ def extract_text_v9(image):
         return f"ERROR: {str(e)}"
 
 # ==============================================================================
-# 3. BỘ PHÂN TÍCH V9 (CẮT CHUỖI & TỰ ĐIỀN MÃ KỲ)
+# 3. BỘ PHÂN TÍCH ẢNH
 # ==============================================================================
 def parse_bingo_results_v9(text, selected_date, start_draw_id):
     results = []
     lines = text.split('\n')
-    
     current_draw_id = start_draw_id
     
     for line in lines:
         if not line.strip(): continue
-        
-        # Vệ sinh dòng chữ
         clean_line = line.replace('O', '0').replace('o', '0').replace('l', '1').replace('I', '1').replace('|', '1').replace('S','5')
         
-        # TÌM MÃ KỲ CỨNG (Nếu có)
         match_id = re.search(r'114\d{6,}', clean_line)
         found_draw_id = 0
         if match_id:
@@ -90,11 +83,10 @@ def parse_bingo_results_v9(text, selected_date, start_draw_id):
             found_draw_id = int(raw_id_str[:9])
             clean_line = clean_line.replace(raw_id_str, "") 
         
-        # TÁCH SỐ (LOGIC CẮT CHUỖI V8)
         raw_chunks = re.findall(r'\d+', clean_line)
         bingo_nums = []
         for chunk in raw_chunks:
-            if len(chunk) > 2: # Cắt chuỗi dính 040915...
+            if len(chunk) > 2: 
                 split_nums = [chunk[i:i+2] for i in range(0, len(chunk), 2)]
                 for n_str in split_nums:
                     try:
@@ -107,9 +99,7 @@ def parse_bingo_results_v9(text, selected_date, start_draw_id):
                     if 1 <= val <= 80: bingo_nums.append(val)
                 except: pass
         
-        # LƯU KẾT QUẢ
         if len(bingo_nums) >= 15:
-            # Lọc trùng
             unique = []
             seen = set()
             for x in bingo_nums:
@@ -117,10 +107,7 @@ def parse_bingo_results_v9(text, selected_date, start_draw_id):
                     unique.append(x)
                     seen.add(x)
             
-            # Xử lý Mã kỳ
             final_id = found_draw_id if found_draw_id > 0 else current_draw_id
-            
-            # Tách số siêu cấp
             main_20 = sorted(unique[:20])
             while len(main_20) < 20: main_20.append(0)
             super_n = unique[20] if len(unique) > 20 else 0
@@ -138,7 +125,7 @@ def parse_bingo_results_v9(text, selected_date, start_draw_id):
     return results
 
 # ==============================================================================
-# 4. MODULE PHÂN TÍCH & KELLY (ĐÃ KHÔI PHỤC)
+# 4. MODULE PHÂN TÍCH & KELLY (UPDATE ĐẦY ĐỦ 1-10 SAO)
 # ==============================================================================
 def calculate_z_scores(df):
     if df.empty: return None, pd.Series(), pd.Series()
@@ -149,7 +136,7 @@ def calculate_z_scores(df):
     counts = pd.Series(all_nums).value_counts().reindex(range(1, 81), fill_value=0)
     mean = counts.mean(); std = counts.std()
     
-    if std == 0: return pd.Series(), pd.Series(), pd.Series() # Tránh lỗi chia cho 0
+    if std == 0: return pd.Series(), pd.Series(), pd.Series() 
     
     z_scores = (counts - mean) / std
     hot = z_scores[z_scores > 1.5].sort_values(ascending=False)
@@ -161,7 +148,7 @@ def kelly_suggestion(win_prob, odds, bankroll):
     p = win_prob
     q = 1 - p
     f = (b * p - q) / b
-    safe_f = max(0, f * 0.5) # Half Kelly an toàn
+    safe_f = max(0, f * 0.5) 
     return safe_f * 100, bankroll * safe_f
 
 def run_prediction(df, algo):
@@ -204,7 +191,6 @@ def toggle_number(n):
     if n in st.session_state.selected_nums: st.session_state.selected_nums.remove(n)
     else: st.session_state.selected_nums.append(n) if len(st.session_state.selected_nums)<20 else st.toast("Max 20!")
 
-# Init State
 if 'selected_nums' not in st.session_state: st.session_state.selected_nums = []
 if 'ocr_result' not in st.session_state: st.session_state.ocr_result = []
 if 'predict_data' not in st.session_state: st.session_state.predict_data = None
@@ -214,14 +200,13 @@ if 'selected_algo' not in st.session_state: st.session_state.selected_algo = "�
 # ==============================================================================
 # 6. GIAO DIỆN CHÍNH (UI)
 # ==============================================================================
-st.title("🎲 BINGO V10 - TOÀN NĂNG (ULTIMATE)")
+st.title("🎲 BINGO V11 - FULL OPTION")
 df_history = load_data()
 status, msg = check_tesseract()
 
 with st.container(border=True):
     t1, t2 = st.tabs(["📸 QUÉT ẢNH", "⚙️ NHẬP TAY"])
     
-    # --- TAB SCAN ---
     with t1:
         st.info("💡 Mẹo: Chụp phần số rõ ràng. Nhập Mã kỳ dòng đầu tiên để máy tự điền.")
         c_up, c_setting = st.columns([2, 1])
@@ -239,9 +224,7 @@ with st.container(border=True):
                     raw_txt = extract_text_v9(img)
                     st.caption("Raw Text (Debug):")
                     st.markdown(f"<div class='raw-text-box'>{raw_txt}</div>", unsafe_allow_html=True)
-                    
                     res = parse_bingo_results_v9(raw_txt, s_date, start_id_input)
-                    
                     if res:
                         st.session_state.ocr_result = res
                         st.markdown(f"<div class='success-msg'>✅ Tìm thấy {len(res)} dòng số!</div>", unsafe_allow_html=True)
@@ -274,7 +257,6 @@ with st.container(border=True):
                 if cnt: save_data(df_history); st.success(f"Đã lưu {cnt} kỳ!"); st.session_state.ocr_result=[]; st.rerun()
                 else: st.warning("Dữ liệu trùng lặp!")
 
-    # --- TAB NHẬP TAY ---
     with t2:
         c1, c2, c3 = st.columns([2,2,1])
         nid = str(int(df_history['draw_id'].max()) + 1) if not df_history.empty else ""
@@ -292,7 +274,7 @@ with st.container(border=True):
             for i,v in enumerate(sorted(st.session_state.selected_nums)): r[f'num_{i+1}'] = v
             save_data(pd.concat([pd.DataFrame([r]), df_history], ignore_index=True)); st.success("Lưu!"); st.rerun()
 
-# --- KHU VỰC PHÂN TÍCH (ĐÃ KHÔI PHỤC) ---
+# --- KHU VỰC PHÂN TÍCH ---
 st.markdown("---")
 st.header("📊 PHÂN TÍCH & DỰ ĐOÁN")
 
@@ -306,7 +288,6 @@ if st.button("🚀 CHẠY PHÂN TÍCH TOÀN DIỆN", type="primary", use_contain
 if st.session_state.predict_data:
     rt1, rt2 = st.tabs(["📉 Z-SCORE (SĂN CẦU)", "💰 DỰ ĐOÁN & KELLY"])
     
-    # TAB Z-SCORE
     with rt1:
         z_all, hot, cold = st.session_state.z_score_data
         c1, c2 = st.columns(2)
@@ -320,12 +301,8 @@ if st.session_state.predict_data:
             if not cold.empty:
                 for n,s in cold.items(): st.markdown(f"<div class='anomaly-box-cold'>🔵 Số <b>{n:02d}</b> (Z: {s:.2f})</div>", unsafe_allow_html=True)
             else: st.info("Không có số lạnh bất thường.")
-        
-        st.markdown("---")
-        fig = px.bar(x=z_all.index, y=z_all.values, labels={'x': 'Số', 'y': 'Z-Score'}, color=z_all.values, color_continuous_scale='RdBu_r')
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(px.bar(x=z_all.index, y=z_all.values, labels={'x': 'Số', 'y': 'Z-Score'}, color=z_all.values, color_continuous_scale='RdBu_r'), use_container_width=True)
 
-    # TAB PREDICT & KELLY
     with rt2:
         c1, c2 = st.columns([2, 1])
         with c1:
@@ -336,8 +313,23 @@ if st.session_state.predict_data:
                 st.session_state.predict_data = run_prediction(df_history, salgo)
                 st.rerun()
             
-            smode = st.selectbox("Chọn dàn:", {"10 Tinh": 10, "6 Tinh": 6, "1 Tinh": 1}.keys(), index=1)
-            pick_n = {"10 Tinh": 10, "6 Tinh": 6, "1 Tinh": 1}[smode]
+            # --- MENU CHỌN DÀN FULL 1-10 ---
+            modes_dict = {
+                "10 Tinh (10 số)": 10,
+                "9 Tinh (9 số)": 9,
+                "8 Tinh (8 số)": 8,
+                "7 Tinh (7 số)": 7,
+                "6 Tinh (6 số)": 6,
+                "5 Tinh (5 số)": 5,
+                "4 Tinh (4 số)": 4,
+                "3 Tinh (3 số)": 3,
+                "2 Tinh (2 số)": 2,
+                "1 Tinh (1 số)": 1
+            }
+            # Mặc định chọn 6 tinh (index 4)
+            smode_label = st.selectbox("Chọn dàn:", list(modes_dict.keys()), index=4)
+            pick_n = modes_dict[smode_label]
+            
             fnums = sorted(list(st.session_state.predict_data)[:pick_n])
             
             cols = st.columns(5)
@@ -348,9 +340,14 @@ if st.session_state.predict_data:
             st.subheader("💰 QUẢN LÝ VỐN (KELLY)")
             my_money = st.number_input("Vốn hiện có (Đài tệ):", value=10000, step=1000)
             
-            # Cấu hình giả định cho Kelly
-            ai_win = 0.55 if smode != "6 Tinh" else 0.35
-            odds_val = 2.0 if smode != "6 Tinh" else 4.0
+            # --- CẤU HÌNH KELLY TỰ ĐỘNG THEO SỐ SAO ---
+            # Số sao càng cao, xác suất trúng càng thấp nhưng tỷ lệ ăn (odds) càng cao
+            if pick_n <= 4:
+                ai_win = 0.55; odds_val = 2.0
+            elif pick_n <= 7:
+                ai_win = 0.35; odds_val = 4.0
+            else: # 8,9,10 Tinh
+                ai_win = 0.15; odds_val = 10.0
             
             kp, km = kelly_suggestion(ai_win, odds_val, my_money)
             
