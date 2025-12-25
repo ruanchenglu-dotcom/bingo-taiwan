@@ -32,7 +32,7 @@ st.markdown("""
 DATA_FILE = 'bingo_history.csv'
 
 # ==============================================================================
-# 2. XỬ LÝ DỮ LIỆU
+# 2. QUẢN LÝ DỮ LIỆU
 # ==============================================================================
 if 'selected_nums' not in st.session_state: st.session_state['selected_nums'] = [] 
 if 'ocr_result' not in st.session_state: st.session_state['ocr_result'] = [] 
@@ -69,30 +69,31 @@ def toggle_number(num):
         else: st.toast("⚠️ Max 20 số!", icon="🚫")
 
 # ==============================================================================
-# 3. CÔNG NGHỆ XỬ LÝ ẢNH V4 (TÁCH NỀN TRẮNG)
+# 3. CÔNG NGHỆ XỬ LÝ ẢNH V4 (TÁCH MÀU TRẮNG)
 # ==============================================================================
 def preprocess_image_v4(image):
     """
-    Kỹ thuật tách ngưỡng cao (High Thresholding) để loại bỏ bóng màu.
-    Chỉ giữ lại phần text màu trắng sáng nhất.
+    Chiến thuật V4: Chỉ giữ lại màu trắng (số), xóa bỏ mọi màu khác (bóng, lửa, nền).
     """
-    # 1. Chuyển sang ảnh OpenCV
+    # 1. Chuyển ảnh sang dạng mảng số (OpenCV)
     img = np.array(image.convert('RGB'))
     
-    # 2. Phóng to ảnh (Upscale) gấp 2 lần để số rõ hơn
-    height, width = img.shape[:2]
-    img = cv2.resize(img, (width*2, height*2), interpolation=cv2.INTER_CUBIC)
+    # 2. Phóng to ảnh gấp 2 lần (Upscale) để số rõ nét hơn
+    # Kỹ thuật này giúp máy đọc được các số nhỏ bị nhòe
+    img = cv2.resize(img, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
     
     # 3. Chuyển sang ảnh xám
     gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
     
-    # 4. Tách màu trắng:
-    # Số màu trắng có giá trị màu ~255. Bóng màu xanh/đỏ/xám có giá trị thấp hơn (<150).
-    # Ta đặt ngưỡng 180 để loại bỏ tất cả bóng màu, chỉ giữ lại số.
+    # 4. LỌC MÀU (QUAN TRỌNG NHẤT):
+    # Trong ảnh xám: Màu trắng = 255, Màu bóng đỏ/xanh = ~50-100.
+    # Ta đặt ngưỡng (Threshold) là 180. 
+    # Mọi thứ tối hơn 180 (bóng, nền, lửa) sẽ biến thành ĐEN (0).
+    # Chỉ có số (màu trắng > 180) mới được giữ lại.
     _, thresh = cv2.threshold(gray, 180, 255, cv2.THRESH_BINARY)
     
-    # 5. Đảo ngược màu (Tesseract thích chữ Đen trên nền Trắng)
-    # Lúc này: Số thành màu Đen, Nền (bóng đã bị xóa) thành màu Trắng.
+    # 5. Đảo ngược màu: Tesseract thích đọc Chữ Đen trên Nền Trắng.
+    # Sau bước này, ta có một tờ giấy trắng tinh với các con số màu đen.
     result = cv2.bitwise_not(thresh)
     
     return result
@@ -100,8 +101,8 @@ def preprocess_image_v4(image):
 def extract_text_v4(image):
     try:
         processed_img = preprocess_image_v4(image)
-        # psm 6: Đọc theo khối văn bản thống nhất (dạng bảng)
-        # whitelist: Chỉ cho phép đọc số và dấu hai chấm (cho giờ)
+        # psm 6: Chế độ đọc khối văn bản thống nhất (dạng bảng)
+        # whitelist: Chỉ cho phép nhận diện số và ký tự cần thiết
         config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789: '
         text = pytesseract.image_to_string(processed_img, config=config)
         return text
@@ -110,8 +111,8 @@ def extract_text_v4(image):
 
 def parse_bingo_results(text, selected_date):
     results = []
-    # Vệ sinh text cơ bản
-    text = text.replace('O', '0').replace('o', '0').replace('l', '1').replace('I', '1')
+    # Vệ sinh text: Sửa các lỗi đọc nhầm phổ biến
+    text = text.replace('O', '0').replace('o', '0').replace('l', '1').replace('I', '1').replace('|', '1')
     
     # Tìm mã kỳ (114xxxxxx)
     matches = list(re.finditer(r'114\d{6}', text))
@@ -121,12 +122,12 @@ def parse_bingo_results(text, selected_date):
             did_str = matches[i].group()
             did = int(did_str)
             
-            # Vùng text của kỳ này
+            # Xác định vùng chứa số của kỳ này
             s = matches[i].end()
             e = matches[i+1].start() if i + 1 < len(matches) else len(text)
             seg = text[s:e]
             
-            # Lấy tất cả số tìm được trong vùng, giữ nguyên thứ tự
+            # Tìm tất cả các số trong vùng đó (Giữ nguyên thứ tự)
             raw_nums = re.findall(r'\b\d{1,2}\b', seg)
             
             valid_nums = []
@@ -134,14 +135,26 @@ def parse_bingo_results(text, selected_date):
                 v = int(n)
                 if 1 <= v <= 80: valid_nums.append(v)
             
-            # Logic tách số: 20 số đầu là chính, số thứ 21 là siêu cấp
+            # --- LOGIC TÁCH SỐ SIÊU CẤP ---
+            # Ảnh của bạn có 20 số bên trái và 1 số siêu cấp bên phải.
+            # Tổng cộng máy sẽ đọc được khoảng 21 số.
+            
             if len(valid_nums) >= 20:
-                main_20 = sorted(list(set(valid_nums[:20])))
-                # Bù số nếu thiếu (do lọc trùng)
-                while len(main_20) < 20: main_20.append(0)
+                # 20 số đầu tiên là dãy số chính
+                main_20 = valid_nums[:20]
                 
-                # Số siêu cấp
-                super_n = valid_nums[20] if len(valid_nums) > 20 else (main_20[-1] if main_20[-1]!=0 else 0)
+                # Số thứ 21 (nếu có) chính là Siêu Cấp
+                super_n = valid_nums[20] if len(valid_nums) > 20 else 0
+                
+                # Nếu không đọc được số thứ 21, thử lấy số cuối cùng của dãy làm siêu cấp tạm thời
+                if super_n == 0 and len(main_20) == 20:
+                     # Đây là trường hợp rủi ro, nhưng tốt hơn là để 0
+                     pass 
+
+                # Sắp xếp 20 số chính cho đúng chuẩn
+                main_20 = sorted(list(set(main_20)))
+                # Bù số 0 nếu thiếu
+                while len(main_20) < 20: main_20.append(0)
                 
                 results.append({
                     'draw_id': did,
@@ -194,22 +207,21 @@ with st.container(border=True):
     
     # --- TAB SCAN V4 ---
     with t1:
-        st.caption("Công nghệ tách nền trắng - Chuyên trị ảnh tối màu.")
+        st.caption("Công nghệ tách nền trắng - Chuyên trị ảnh tối màu & bóng lửa.")
         up_file = st.file_uploader("Upload ảnh:", type=['png','jpg','jpeg'])
         s_date = st.date_input("Ngày:", datetime.now())
         
-        if up_file and st.button("🔍 QUÉT NGAY", type="primary"):
+        if up_file and st.button("🔍 QUÉT NGAY (V4)", type="primary"):
             img = Image.open(up_file)
             st.image(img, caption='Ảnh gốc', width=400)
             
-            with st.spinner("Đang tách màu và đọc số..."):
+            with st.spinner("Đang lọc bỏ màu bóng và lửa..."):
                 raw_txt = extract_text_v4(img)
-                # st.code(raw_txt) # Debug text
                 res = parse_bingo_results(raw_txt, s_date)
                 
                 if res:
                     st.session_state['ocr_result'] = res
-                    st.success(f"Đọc được {len(res)} kỳ!")
+                    st.success(f"Thành công! Đọc được {len(res)} kỳ.")
                 else:
                     st.error("Không đọc được. Hãy thử cắt ảnh sát bảng số hơn.")
 
