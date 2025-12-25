@@ -7,7 +7,7 @@ import re
 from collections import Counter
 from datetime import datetime
 import plotly.express as px
-from PIL import Image
+from PIL import Image, ImageEnhance, ImageFilter
 import pytesseract
 import cv2
 
@@ -15,7 +15,7 @@ import cv2
 # 1. CẤU HÌNH HỆ THỐNG
 # ==============================================================================
 st.set_page_config(
-    page_title="Bingo Quantum AI - Platinum", 
+    page_title="Bingo Quantum AI - Platinum Fix", 
     layout="wide", 
     initial_sidebar_state="collapsed"
 )
@@ -48,7 +48,7 @@ if 'predict_data' not in st.session_state: st.session_state['predict_data'] = No
 if 'z_score_data' not in st.session_state: st.session_state['z_score_data'] = None 
 if 'selected_algo' not in st.session_state: st.session_state['selected_algo'] = "🔮 AI Master (Tổng Hợp)"
 if 'paste_key_id' not in st.session_state: st.session_state['paste_key_id'] = 0
-if 'ocr_result' not in st.session_state: st.session_state['ocr_result'] = [] # Lưu kết quả quét ảnh
+if 'ocr_result' not in st.session_state: st.session_state['ocr_result'] = [] 
 
 def load_data():
     num_cols = [f'num_{i}' for i in range(1, 21)]
@@ -83,96 +83,107 @@ def clear_selection(): st.session_state['selected_nums'] = []
 def clear_paste_box(): st.session_state['paste_key_id'] += 1
 
 # ==============================================================================
-# 3. OCR & PARSER ENGINE (TRÁI TIM CỦA HỆ THỐNG)
+# 3. OCR & PARSER ENGINE (ĐÃ NÂNG CẤP LOGIC)
 # ==============================================================================
 def preprocess_image(image):
-    """Xử lý ảnh để OCR đọc tốt hơn"""
-    # Chuyển PIL Image sang OpenCV format
+    """Xử lý ảnh nâng cao để tăng độ nét cho số"""
+    # Tăng độ tương phản và sắc nét trước khi chuyển sang OpenCV
+    enhancer = ImageEnhance.Contrast(image)
+    image = enhancer.enhance(2.0)
+    image = image.filter(ImageFilter.SHARPEN)
+
     img_cv = np.array(image)
     img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGB2BGR)
-    
-    # Chuyển sang ảnh xám
     gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
     
-    # Khử nhiễu và tăng tương phản (Thresholding)
-    # Dùng Otsu's binarization để tự động tìm ngưỡng
-    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # Áp dụng mờ nhẹ để loại bỏ nhiễu hạt
+    blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+    
+    # Thresholding để tách chữ đen trên nền trắng
+    _, thresh = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     
     return thresh
 
 def extract_text_from_image(image):
-    """Đọc chữ từ ảnh"""
     try:
         processed_img = preprocess_image(image)
-        # Cấu hình Tesseract: Chỉ đọc số và tiếng Anh cơ bản, chế độ layout thưa
-        custom_config = r'--oem 3 --psm 6' 
+        # psm 6: Giả định một khối văn bản thống nhất
+        custom_config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789: ' 
         text = pytesseract.image_to_string(processed_img, config=custom_config)
         return text
     except Exception as e:
         return f"Error OCR: {e}"
 
 def parse_multi_draws(text, selected_date):
-    """Phân tích văn bản (từ Paste hoặc OCR) ra dữ liệu số"""
+    """
+    Phân tích văn bản thông minh.
+    Ưu tiên thứ tự đọc từ trái sang phải để tách số siêu cấp nằm riêng.
+    """
     results = []
     
-    # Bước 1: Vệ sinh văn bản (Sửa lỗi OCR thường gặp)
-    text = text.replace('O', '0').replace('o', '0')
-    text = text.replace('l', '1').replace('I', '1')
-    text = text.replace('B', '8')
-    text = text.replace('S', '5')
+    # Vệ sinh văn bản sơ bộ
+    text = text.replace('O', '0').replace('o', '0').replace('l', '1').replace('I', '1').replace('|', '1')
     
-    # Bước 2: Tìm các cụm có khả năng là mã kỳ (114xxxxxx)
-    # Regex linh hoạt hơn chút cho OCR
+    # Tìm các mã kỳ (ví dụ 114072741)
     matches = list(re.finditer(r'\b114\d{6}\b', text))
-    
-    # Nếu không tìm thấy mã chuẩn, thử tìm chuỗi 9 số bất kỳ đầu 114
     if not matches:
-        matches = list(re.finditer(r'114\d{6}', text))
+         matches = list(re.finditer(r'114\d{6}', text))
 
     for i in range(len(matches)):
         try:
             did_str = matches[i].group()
             did = int(did_str)
             
-            # Xác định vùng dữ liệu của kỳ này
+            # Xác định vùng văn bản của kỳ này
             s = matches[i].end()
             e = matches[i+1].start() if i + 1 < len(matches) else len(text)
             seg = text[s:e]
             
-            # Tìm tất cả số có 1-2 chữ số trong vùng đó
-            raw_nums = re.findall(r'\b\d{1,2}\b', seg)
+            # --- LOGIC MỚI QUAN TRỌNG ---
+            # Tìm tất cả các số, GIỮ NGUYÊN THỨ TỰ xuất hiện trong ảnh
+            raw_nums_str = re.findall(r'\b\d{1,2}\b', seg)
             
-            # Lọc số hợp lệ (1-80)
-            valid_nums = []
-            for n in raw_nums:
-                val = int(n)
-                if 1 <= val <= 80:
-                    valid_nums.append(val)
+            valid_nums_ordered = []
+            for n_str in raw_nums_str:
+                try:
+                    val = int(n_str)
+                    if 1 <= val <= 80: # Chỉ lấy số trong khoảng 1-80
+                        valid_nums_ordered.append(val)
+                except: continue
             
-            # Loại bỏ trùng lặp và lấy 20 số đầu tiên
-            unique_nums = []
-            seen = set()
-            for n in valid_nums:
-                if n not in seen:
-                    unique_nums.append(n)
-                    seen.add(n)
-                if len(unique_nums) == 20:
-                    break
+            main_20_nums = []
+            separate_super_num = 0
             
-            # Chỉ chấp nhận nếu tìm thấy đủ nhiều số (ít nhất 15 số)
-            if len(unique_nums) >= 15:
-                # Sắp xếp lại cho đẹp
-                final_nums = sorted(unique_nums)
-                # Số siêu cấp thường là số cuối cùng hoặc số đặc biệt, ở đây tạm lấy số cuối
-                super_n = final_nums[-1] if final_nums else 0
+            # Trường hợp lý tưởng: Đọc được >= 21 số (20 số chính + số siêu cấp bên phải)
+            # Vì OCR đọc từ trái qua phải, số siêu cấp bên phải sẽ nằm cuối danh sách.
+            if len(valid_nums_ordered) >= 21:
+                # 20 số đầu tiên xuất hiện là dãy số chính (cần sort lại cho đúng quy chuẩn)
+                main_20_nums = sorted(list(set(valid_nums_ordered[:20])))
                 
-                results.append({
+                # Số xuất hiện thứ 21 (index 20) chính là số siêu cấp nằm riêng
+                separate_super_num = valid_nums_ordered[20]
+
+            # Trường hợp chỉ đọc được khoảng 20 số (có thể sót số siêu cấp rời)
+            elif len(valid_nums_ordered) >= 15:
+                 # Lấy tất cả làm số chính
+                 main_20_nums = sorted(list(set(valid_nums_ordered)))
+                 # Nếu thiếu thì bù số 0 vào cho đủ 20 (để user tự sửa)
+                 while len(main_20_nums) < 20:
+                     main_20_nums.append(0)
+                 # Tạm lấy số cuối làm siêu cấp nếu không có số rời
+                 separate_super_num = main_20_nums[-1] if main_20_nums and main_20_nums[-1] !=0 else 0
+
+            # Chỉ chấp nhận kết quả nếu dãy số chính có vẻ ổn
+            if len(main_20_nums) == 20 and main_20_nums.count(0) < 10:
+                 results.append({
                     'draw_id': did, 
                     'time': datetime.combine(selected_date, datetime.now().time()), 
-                    'nums': final_nums, 
-                    'super_num': super_n
-                })
+                    'nums': main_20_nums, 
+                    # Sử dụng số siêu cấp tách riêng nếu có
+                    'super_num': separate_super_num
+                 })
         except: continue
+        
     return results
 
 # ==============================================================================
@@ -224,9 +235,9 @@ df_history = load_data()
 with st.container(border=True):
     t1, t2, t3 = st.tabs(["📸 QUÉT ẢNH (SCAN)", "🖱️ BÀN PHÍM SỐ", "📋 DÁN (COPY)"])
     
-    # --- TAB 1: SCAN ẢNH (MỚI) ---
+    # --- TAB 1: SCAN ẢNH (ĐÃ SỬA LỖI) ---
     with t1:
-        st.caption("Upload ảnh chụp kết quả xổ số (Rõ nét). Hệ thống sẽ tự đọc số.")
+        st.caption("Upload ảnh chụp kết quả. Hệ thống ưu tiên đọc từ trái sang phải để tách số siêu cấp.")
         col_up1, col_up2 = st.columns([2, 1])
         with col_up1:
             uploaded_file = st.file_uploader("Chọn ảnh:", type=['png', 'jpg', 'jpeg'])
@@ -237,37 +248,34 @@ with st.container(border=True):
             st.image(image, caption='Ảnh đã tải lên', use_container_width=True)
             
             if st.button("🔍 BẮT ĐẦU QUÉT SỐ", type="primary"):
-                with st.spinner("AI đang đọc ảnh..."):
-                    # 1. Trích xuất văn bản
+                with st.spinner("AI đang phân tích thứ tự số..."):
                     raw_text = extract_text_from_image(image)
-                    # st.text_area("Debug Text (Nếu cần):", raw_text) # Uncomment để debug
-                    
-                    # 2. Phân tích số liệu
+                    # st.text_area("Debug Text:", raw_text) # Mở cái này nếu muốn xem máy đọc ra chữ gì
                     extracted_data = parse_multi_draws(raw_text, scan_date)
                     
                     if extracted_data:
                         st.session_state['ocr_result'] = extracted_data
-                        st.success(f"Đã tìm thấy {len(extracted_data)} kỳ quay!")
+                        st.success(f"Đã tìm thấy {len(extracted_data)} kỳ quay! Vui lòng kiểm tra kỹ bên dưới.")
                     else:
-                        st.error("Không tìm thấy dữ liệu hợp lệ. Hãy thử chụp ảnh rõ hơn hoặc crop sát bảng số.")
+                        st.error("Không tìm thấy dữ liệu hợp lệ. Ảnh có thể quá mờ hoặc bị cắt mất phần mã kỳ.")
 
-        # Hiển thị kết quả quét và nút Lưu
         if st.session_state['ocr_result']:
             st.markdown("---")
-            st.write("### 📝 Kết quả đọc được:")
+            st.write("### 📝 Kết quả đọc được (Kiểm tra kỹ trước khi Lưu):")
             
-            # Cho phép user sửa lại nếu máy đọc sai
             for i, item in enumerate(st.session_state['ocr_result']):
-                with st.expander(f"Kỳ {item['draw_id']} (Đọc được {len(item['nums'])} số)", expanded=True):
-                    # Hiển thị các số dưới dạng string để user có thể sửa
-                    nums_str = ", ".join([str(n) for n in item['nums']])
-                    new_nums_str = st.text_input(f"Dãy số kỳ {item['draw_id']}:", value=nums_str, key=f"edit_ocr_{i}")
-                    
-                    # Cập nhật lại list số nếu user sửa
-                    try:
-                        new_nums = sorted([int(n.strip()) for n in new_nums_str.split(',') if n.strip().isdigit()])
-                        st.session_state['ocr_result'][i]['nums'] = new_nums
-                    except: pass
+                with st.expander(f"✅ Kỳ {item['draw_id']} - Siêu cấp dự đoán: {item['super_num']}", expanded=True):
+                    c_edit1, c_edit2 = st.columns([3, 1])
+                    with c_edit1:
+                        nums_str = ", ".join([str(n) for n in item['nums']])
+                        new_nums_str = st.text_area(f"Dãy 20 số (Kỳ {item['draw_id']}):", value=nums_str, key=f"edit_ocr_nums_{i}", height=70)
+                        try:
+                            new_nums = sorted([int(n.strip()) for n in new_nums_str.split(',') if n.strip().isdigit()])
+                            st.session_state['ocr_result'][i]['nums'] = new_nums
+                        except: pass
+                    with c_edit2:
+                        new_super = st.number_input(f"Số Siêu Cấp (Kỳ {item['draw_id']}):", value=item['super_num'], min_value=1, max_value=80, key=f"edit_ocr_super_{i}")
+                        st.session_state['ocr_result'][i]['super_num'] = new_super
 
             if st.button("💾 LƯU TẤT CẢ VÀO LỊCH SỬ", type="primary", key="save_ocr"):
                 added = 0
@@ -275,23 +283,20 @@ with st.container(border=True):
                     if df_history.empty or item['draw_id'] not in df_history['draw_id'].values:
                         r = {'draw_id': item['draw_id'], 'time': item['time'], 'super_num': item['super_num']}
                         for i, v in enumerate(item['nums']): 
-                            # Đảm bảo đủ 20 cột, thiếu thì điền 0
                             if i < 20: r[f'num_{i+1}'] = v
-                        # Điền nốt nếu thiếu số (tránh lỗi)
                         for k in range(len(item['nums']) + 1, 21): r[f'num_{k}'] = 0
-                            
                         df_history = pd.concat([pd.DataFrame([r]), df_history], ignore_index=True)
                         added += 1
                 
                 if added > 0:
                     save_data(df_history)
                     st.success(f"Đã lưu thành công {added} kỳ mới!")
-                    st.session_state['ocr_result'] = [] # Reset sau khi lưu
+                    st.session_state['ocr_result'] = []
                     st.rerun()
                 else:
                     st.warning("Các kỳ này đã có trong lịch sử rồi!")
 
-    # --- TAB 2: NHẬP TAY (GIỮ NGUYÊN) ---
+    # --- TAB 2: NHẬP TAY ---
     with t2:
         c1, c2, c3 = st.columns([2, 2, 1])
         with c1: 
@@ -322,14 +327,24 @@ with st.container(border=True):
                 save_data(pd.concat([pd.DataFrame([row]), df_history], ignore_index=True))
                 st.success("Đã lưu!"); clear_selection(); st.rerun()
 
-    # --- TAB 3: DÁN COPY (GIỮ NGUYÊN) ---
+    # --- TAB 3: DÁN COPY ---
     with t3:
         c1, c2 = st.columns([3, 1])
         with c1: pdate = st.date_input("Ngày:", datetime.now(), key="pdate")
         with c2: st.button("🗑 Xóa ô dán", on_click=clear_paste_box, use_container_width=True)
         ptext = st.text_area("Dán dữ liệu:", height=150, key=f"parea_{st.session_state['paste_key_id']}")
         if st.button("💾 XỬ LÝ & LƯU", type="primary", use_container_width=True):
-            ext = parse_multi_draws(ptext, pdate)
+            # Sử dụng lại hàm parse cũ cho text copy vì nó không có số siêu cấp rời
+            results = []
+            matches = list(re.finditer(r'\b114\d{6}\b', ptext))
+            for i in range(len(matches)):
+                try:
+                    did = int(matches[i].group()); s = matches[i].end(); e = matches[i+1].start() if i + 1 < len(matches) else len(ptext)
+                    nums = sorted(list(set([int(n) for n in re.findall(r'\d{2}', ptext[s:e]) if 1 <= int(n) <= 80]))[:20])
+                    if len(nums) >= 15: results.append({'draw_id': did, 'time': datetime.combine(pdate, datetime.now().time()), 'nums': nums, 'super_num': nums[-1]})
+                except: continue
+            
+            ext = results
             if ext:
                 added = 0
                 for it in ext:
