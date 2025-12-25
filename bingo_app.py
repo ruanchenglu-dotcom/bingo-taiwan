@@ -17,34 +17,55 @@ st.set_page_config(
     initial_sidebar_state="collapsed"
 )
 
-# CSS Tùy chỉnh (Giao diện Chuyên gia)
+# CSS Tùy chỉnh (Giao diện Chuyên gia & Nút Piano)
 st.markdown("""
 <style>
+    /* Nút bấm số cao và hẹp */
     div.stButton > button:first-child {
-        min-height: 65px; width: 100%; margin: 0px 1px;
-        font-weight: bold; border-radius: 6px; font-size: 18px;
+        min-height: 65px; 
+        width: 100%; 
+        margin: 0px 1px;
+        font-weight: bold; 
+        border-radius: 6px; 
+        font-size: 18px;
     }
     .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
         font-size: 1.1rem; font-weight: bold;
     }
     [data-testid="column"] { padding: 0px 2px; }
-    .anomaly-box-hot { background-color: #ffe6e6; padding: 10px; border-radius: 5px; border-left: 5px solid #ff4b4b; margin-bottom: 5px; color: #c0392b;}
-    .anomaly-box-cold { background-color: #e8f8f5; padding: 10px; border-radius: 5px; border-left: 5px solid #1abc9c; margin-bottom: 5px; color: #16a085;}
-    .kelly-box { background-color: #fff8e1; padding: 15px; border-radius: 8px; border: 2px solid #f1c40f; text-align: center; font-weight: bold; font-size: 18px; }
+    
+    /* Box hiển thị Z-Score */
+    .anomaly-box-hot { 
+        background-color: #ffe6e6; padding: 10px; border-radius: 5px; 
+        border-left: 5px solid #ff4b4b; margin-bottom: 5px; color: #c0392b;
+    }
+    .anomaly-box-cold { 
+        background-color: #e8f8f5; padding: 10px; border-radius: 5px; 
+        border-left: 5px solid #1abc9c; margin-bottom: 5px; color: #16a085;
+    }
+    
+    /* Box hiển thị Kelly */
+    .kelly-box { 
+        background-color: #fff8e1; padding: 15px; border-radius: 8px; 
+        border: 2px solid #f1c40f; text-align: center; font-weight: bold; font-size: 18px; 
+    }
 </style>
 """, unsafe_allow_html=True)
 
 DATA_FILE = 'bingo_history.csv'
 
 # ==============================================================================
-# 2. STATE & DATA
+# 2. QUẢN LÝ TRẠNG THÁI (SESSION STATE)
 # ==============================================================================
 if 'selected_nums' not in st.session_state: st.session_state['selected_nums'] = [] 
 if 'predict_data' not in st.session_state: st.session_state['predict_data'] = None 
-if 'z_score_data' not in st.session_state: st.session_state['z_score_data'] = None # New State
+if 'z_score_data' not in st.session_state: st.session_state['z_score_data'] = None 
 if 'selected_algo' not in st.session_state: st.session_state['selected_algo'] = "🔮 AI Master (Tổng Hợp)"
 if 'paste_key_id' not in st.session_state: st.session_state['paste_key_id'] = 0
 
+# ==============================================================================
+# 3. CÁC HÀM XỬ LÝ DỮ LIỆU
+# ==============================================================================
 def load_data():
     num_cols = [f'num_{i}' for i in range(1, 21)]
     columns = ['draw_id', 'time'] + num_cols + ['super_num']
@@ -68,24 +89,18 @@ def delete_last_row():
     if not df.empty: df = df.iloc[1:]; save_data(df); return True
     return False
 
-def delete_all_data():
-    if os.path.exists(DATA_FILE): os.remove(DATA_FILE); return True
-    return False
-
-# ==============================================================================
-# 3. LOGIC & PARSER
-# ==============================================================================
 def toggle_number(num):
     if num in st.session_state['selected_nums']: st.session_state['selected_nums'].remove(num)
     else:
         if len(st.session_state['selected_nums']) < 20: st.session_state['selected_nums'].append(num)
-        else: st.toast("⚠️ Max 20 số!", icon="🚫")
+        else: st.toast("⚠️ Tối đa 20 số!", icon="🚫")
 
 def clear_selection(): st.session_state['selected_nums'] = []
 def clear_paste_box(): st.session_state['paste_key_id'] += 1
 
 def parse_multi_draws(text, selected_date):
     results = []
+    # Regex tìm mã kỳ bắt đầu bằng 114...
     matches = list(re.finditer(r'\b114\d{6}\b', text))
     for i in range(len(matches)):
         try:
@@ -100,7 +115,7 @@ def parse_multi_draws(text, selected_date):
     return results
 
 # ==============================================================================
-# 4. QUANTUM ANALYSIS (Z-SCORE & KELLY)
+# 4. MODULE PHÂN TÍCH Z-SCORE & KELLY
 # ==============================================================================
 def calculate_z_scores(df):
     """Tính toán Z-Score cho 80 số dựa trên 30 kỳ gần nhất"""
@@ -110,6 +125,7 @@ def calculate_z_scores(df):
     all_nums = []
     for i in range(1, 21): all_nums.extend(recent[f'num_{i}'].tolist())
     
+    # Đếm số lần xuất hiện
     counts = pd.Series(all_nums).value_counts().reindex(range(1, 81), fill_value=0)
     
     # Thống kê cơ bản
@@ -120,26 +136,25 @@ def calculate_z_scores(df):
     z_scores = (counts - mean) / std
     
     # Lọc Dị Biệt (Anomalies)
-    # Z > 1.5: Nóng bất thường
-    # Z < -1.5: Lạnh bất thường
     hot_anomalies = z_scores[z_scores > 1.5].sort_values(ascending=False)
     cold_anomalies = z_scores[z_scores < -1.5].sort_values(ascending=True)
     
     return z_scores, hot_anomalies, cold_anomalies
 
-def kelly_criterion_suggestion(win_prob=0.25, odds=3.0, bankroll=10000):
-    """Gợi ý đi tiền theo Kelly"""
-    # f = (bp - q) / b
-    # b = odds - 1 (Tỷ lệ cược ròng)
-    # p = win_prob (Xác suất thắng)
-    # q = 1 - p (Xác suất thua)
-    b = odds - 1
-    p = win_prob
-    q = 1 - p
+def kelly_criterion_suggestion(win_prob, odds, bankroll):
+    """
+    Công thức Kelly: f = (bp - q) / b
+    """
+    b = odds - 1  # Tỷ lệ cược ròng
+    p = win_prob  # Xác suất thắng
+    q = 1 - p     # Xác suất thua
+    
     f = (b * p - q) / b
     
-    # Kelly an toàn (Half Kelly) để giảm rủi ro
+    # Kelly An Toàn (Half Kelly) để giảm rủi ro
     safe_f = f * 0.5 
+    
+    # Nếu âm thì trả về 0
     if safe_f < 0: safe_f = 0
     
     bet_amount = bankroll * safe_f
@@ -154,32 +169,39 @@ def run_prediction(df, strategy):
     last = [df.iloc[0][f'num_{i}'] for i in range(1, 21)]
     scores = {}
     for n in range(1, 81):
-        if strategy == "🔮 AI Master":
+        if strategy == "🔮 AI Master (Tổng Hợp)":
             s = freq.get(n, 0) * 1.5
             if n in last: s += 3.0
             if (n-1) in last or (n+1) in last: s += 1.0
             s += random.uniform(0, 1.0)
             scores[n] = s
-        elif strategy == "🔥 Soi Cầu Nóng": scores[n] = freq.get(n, 0) + (random.random() * 0.1)
-        elif strategy == "❄️ Soi Cầu Lạnh": scores[n] = (freq.max() if not freq.empty else 0 - freq.get(n, 0)) + random.uniform(0, 1.5)
-        elif strategy == "♻️ Soi Cầu Bệt": scores[n] = (1000 if n in last else 0) + freq.get(n, 0)*0.1
+        elif strategy == "🔥 Soi Cầu Nóng (Hot)": scores[n] = freq.get(n, 0) + (random.random() * 0.1)
+        elif strategy == "❄️ Soi Cầu Lạnh (Nuôi)": scores[n] = (freq.max() if not freq.empty else 0 - freq.get(n, 0)) + random.uniform(0, 1.5)
+        elif strategy == "♻️ Soi Cầu Bệt (Lại)": scores[n] = (1000 if n in last else 0) + freq.get(n, 0)*0.1
     return sorted(scores, key=scores.get, reverse=True)
 
 # ==============================================================================
-# 5. UI CHÍNH
+# 5. GIAO DIỆN CHÍNH (UI)
 # ==============================================================================
 st.title("🎲 BINGO QUANTUM - Z-SCORE EDITION")
 df_history = load_data()
 
+# --- KHU VỰC NHẬP LIỆU ---
 with st.container(border=True):
     t1, t2 = st.tabs(["🖱️ BÀN PHÍM SỐ", "📋 DÁN (COPY)"])
+    
+    # Tab Nhập Tay
     with t1:
         c1, c2, c3 = st.columns([2, 2, 1])
-        with c1: nid = str(int(df_history['draw_id'].max()) + 1) if not df_history.empty else ""; mid = st.text_input("Mã Kỳ:", value=nid, key="mid")
+        with c1: 
+            nid = str(int(df_history['draw_id'].max()) + 1) if not df_history.empty else ""
+            mid = st.text_input("Mã Kỳ:", value=nid, key="mid")
         with c2: mdate = st.date_input("Ngày:", datetime.now(), key="mdate")
-        with c3: st.write(""); st.write(""); st.button("Xóa chọn", key="b_clr", on_click=clear_selection)
+        with c3: 
+            st.write(""); st.write("")
+            st.button("Xóa chọn", key="b_clr", on_click=clear_selection)
         
-        st.markdown(f"**🔢 Chọn: <span style='color:red'>{len(st.session_state['selected_nums'])}/20</span>**", unsafe_allow_html=True)
+        st.markdown(f"**🔢 Đã chọn: <span style='color:red'>{len(st.session_state['selected_nums'])}/20</span>**", unsafe_allow_html=True)
         for r in range(8):
             cols = st.columns(10)
             for c in range(10):
@@ -201,6 +223,7 @@ with st.container(border=True):
                 save_data(pd.concat([pd.DataFrame([row]), df_history], ignore_index=True))
                 st.success("Đã lưu!"); clear_selection(); st.rerun()
 
+    # Tab Copy Paste
     with t2:
         c1, c2 = st.columns([3, 1])
         with c1: pdate = st.date_input("Ngày:", datetime.now(), key="pdate")
@@ -220,6 +243,7 @@ with st.container(border=True):
                 else: st.warning("Dữ liệu cũ!")
             else: st.error("Lỗi dữ liệu!")
 
+# --- KHU VỰC PHÂN TÍCH ---
 st.write(""); st.markdown("### 📊 PHÂN TÍCH ĐỊNH LƯỢNG (QUANTITATIVE)")
 
 if st.button("🚀 CHẠY PHÂN TÍCH TOÀN DIỆN", type="primary", use_container_width=True):
@@ -233,17 +257,17 @@ if st.session_state['predict_data'] or not df_history.empty:
     st.markdown("---")
     rt1, rt2 = st.tabs(["📉 PHÂN TÍCH Z-SCORE (DỊ BIỆT)", "🎯 DỰ ĐOÁN & QUẢN LÝ VỐN"])
     
-    # --- TAB Z-SCORE (TÍNH NĂNG MỚI) ---
+    # --- TAB Z-SCORE ---
     with rt1:
         st.subheader("🔍 Tìm Kiếm Sự Dị Biệt (Statistical Anomalies)")
-        st.caption("Dựa trên 30 kỳ gần nhất. Nếu Z-Score > 1.5 là RẤT NÓNG. Z-Score < -1.5 là RẤT LẠNH (Sắp nổ).")
+        st.caption("Dựa trên 30 kỳ gần nhất. Z-Score đo lường độ lệch chuẩn.")
         
         if st.session_state['z_score_data']:
             z_all, hots, colds = st.session_state['z_score_data']
             
             c_hot, c_cold = st.columns(2)
             with c_hot:
-                st.markdown("#### 🔥 CÁC SỐ 'NÓNG' BẤT THƯỜNG (Z > 1.5)")
+                st.markdown("#### 🔥 SỐ 'NÓNG' BẤT THƯỜNG (Z > 1.5)")
                 st.write("👉 *Chiến thuật: Bám theo dây đỏ (Đánh tiếp)*")
                 if not hots.empty:
                     for n, score in hots.items():
@@ -251,27 +275,28 @@ if st.session_state['predict_data'] or not df_history.empty:
                 else: st.info("Không có số nào nóng bất thường.")
                 
             with c_cold:
-                st.markdown("#### ❄️ CÁC SỐ 'LẠNH' BẤT THƯỜNG (Z < -1.5)")
+                st.markdown("#### ❄️ SỐ 'LẠNH' BẤT THƯỜNG (Z < -1.5)")
                 st.write("👉 *Chiến thuật: Nuôi gấp thếp (Sắp nổ)*")
                 if not colds.empty:
                     for n, score in colds.items():
                         st.markdown(f"<div class='anomaly-box-cold'>🔵 Số <b>{n:02d}</b> (Z-Score: {score:.2f}) - Siêu Lạnh</div>", unsafe_allow_html=True)
                 else: st.info("Không có số nào lạnh bất thường.")
                 
-            # Biểu đồ Z-Score
             st.markdown("---")
-            st.markdown("##### 📈 Biểu đồ phân phối Z-Score toàn bộ 80 số")
-            fig = px.bar(x=z_all.index, y=z_all.values, labels={'x': 'Số (1-80)', 'y': 'Z-Score (Độ lệch chuẩn)'}, color=z_all.values, color_continuous_scale='RdBu_r')
+            st.markdown("##### 📈 Biểu đồ phân phối Z-Score (Toàn bộ 80 số)")
+            fig = px.bar(x=z_all.index, y=z_all.values, labels={'x': 'Số (1-80)', 'y': 'Z-Score'}, color=z_all.values, color_continuous_scale='RdBu_r')
             st.plotly_chart(fig, use_container_width=True)
         else:
-            st.info("Chưa chạy phân tích.")
+            st.info("Vui lòng bấm 'Chạy Phân Tích' để xem.")
 
     # --- TAB DỰ ĐOÁN & KELLY ---
     with rt2:
         c1, c2 = st.columns([2, 1])
+        
+        # Phần Dự Đoán
         with c1:
-            st.subheader("KẾT QUẢ DỰ ĐOÁN")
-            algos = ["🔮 AI Master", "🔥 Soi Cầu Nóng", "❄️ Soi Cầu Lạnh", "♻️ Soi Cầu Bệt"]
+            st.subheader("KẾT QUẢ DỰ ĐOÁN AI")
+            algos = ["🔮 AI Master (Tổng Hợp)", "🔥 Soi Cầu Nóng (Hot)", "❄️ Soi Cầu Lạnh (Nuôi)", "♻️ Soi Cầu Bệt (Lại)"]
             salgo = st.selectbox("Thuật toán:", algos, index=0)
             if salgo != st.session_state['selected_algo']:
                 st.session_state['selected_algo'] = salgo
@@ -286,29 +311,40 @@ if st.session_state['predict_data'] or not df_history.empty:
                 for i, n in enumerate(fnums): 
                     cols[i%5].markdown(f"<div style='background-color:{'#E74C3C' if n>40 else '#3498DB'}; color:white; padding:10px; border-radius:5px; text-align:center; font-weight:bold; font-size:20px; margin-bottom:5px'>{n:02d}</div>", unsafe_allow_html=True)
 
-        # GỢI Ý ĐI TIỀN KELLY
+        # Phần Quản Lý Vốn Kelly (ĐÃ SỬA LỖI HIỂN THỊ)
         with c2:
             st.subheader("💰 QUẢN LÝ VỐN (KELLY)")
-            st.caption("Công thức Kelly giúp bạn biết nên đánh bao nhiêu tiền.")
+            st.caption("Gợi ý số tiền đánh dựa trên giả định AI có tỷ lệ thắng tốt.")
             
             my_money = st.number_input("Vốn hiện có (Đài tệ):", value=10000, step=1000)
             
-            # Giả định tỷ lệ thắng cho 1 Tinh (~25%)
-            win_pct = 0.25 
-            if smode == "6 Tinh": win_pct = 0.15 # Khó hơn xíu
+            # --- CẤU HÌNH NIỀM TIN VÀO AI ---
+            # Để Kelly gợi ý tiền, ta giả định AI giúp tăng tỷ lệ thắng lên > 50%
+            ai_win_rate = 0.55  # Giả định AI thắng 55%
+            odds_val = 2.0      # Tỷ lệ 1 ăn 2
             
-            kelly_pct, kelly_money = kelly_criterion_suggestion(win_prob=win_pct, odds=2.0, bankroll=my_money) # Odds 1 ăn 2
+            if smode == "6 Tinh": 
+                ai_win_rate = 0.35 # 6 Tinh khó hơn
+                odds_val = 4.0     # Nhưng ăn đậm hơn
             
-            st.markdown(f"""
-            <div class='kelly-box'>
-                💡 GỢI Ý ĐI TIỀN:<br>
-                <span style='color:#e67e22; font-size: 24px'>{kelly_pct:.1f}% Vốn</span><br>
-                Tương đương: <span style='color:#27ae60; font-size: 24px'>${kelly_money:,.0f} TWD</span>
-            </div>
-            """, unsafe_allow_html=True)
-            st.info("⚠️ Đây là mức cược tối ưu toán học (Kelly an toàn). Đừng đánh hơn số này.")
+            kelly_pct, kelly_money = kelly_criterion_suggestion(win_prob=ai_win_rate, odds=odds_val, bankroll=my_money)
+            
+            if kelly_pct > 0:
+                color_money = "#27ae60"
+                st.markdown(f"""
+                <div class='kelly-box'>
+                    💡 GỢI Ý ĐI TIỀN:<br>
+                    <span style='color:#e67e22; font-size: 24px'>{kelly_pct:.1f}% Vốn</span><br>
+                    Tương đương: <span style='color:{color_money}; font-size: 24px'>${kelly_money:,.0f} TWD</span>
+                </div>
+                """, unsafe_allow_html=True)
+            else:
+                st.warning("⚠️ Rủi ro cao. Kelly khuyên bảo toàn vốn.")
+            
+            st.info("ℹ️ Lưu ý: Mức cược này dựa trên giả định AI dự đoán chính xác hơn ngẫu nhiên.")
 
+# --- LỊCH SỬ ---
 st.markdown("---")
-with st.expander("LỊCH SỬ"):
+with st.expander("LỊCH SỬ KỲ QUAY"):
     if st.button("Xóa kỳ cuối"): delete_last_row(); st.rerun()
     if not df_history.empty: st.dataframe(df_history, use_container_width=True, hide_index=True)
