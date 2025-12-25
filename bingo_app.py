@@ -13,32 +13,31 @@ import pytesseract
 import cv2
 
 # ==============================================================================
-# 1. CẤU HÌNH & GIAO DIỆN MOBILE
+# 1. CẤU HÌNH & CSS (NÚT SIÊU TO)
 # ==============================================================================
-st.set_page_config(page_title="Bingo V13 - Final Mobile", layout="wide")
+st.set_page_config(page_title="Bingo V15 - Big Buttons", layout="wide")
 
-# CSS TỐI ƯU GIAO DIỆN
 st.markdown("""
 <style>
-    /* Nút bấm số: To, Rộng, Sát nhau */
+    /* Nút bấm số: RỘNG HƠN, CAO HƠN */
     div.stButton > button:first-child { 
-        min-height: 50px !important; 
+        min-height: 55px !important; 
         width: 100% !important; 
-        margin: 1px 0px !important;
+        margin: 2px 0px !important; /* Cách nhau xíu cho đỡ dính */
         padding: 0px !important;
         font-weight: bold; 
-        border-radius: 4px; 
-        font-size: 18px; /* Chữ to hơn */
+        border-radius: 8px; /* Bo tròn hơn chút */
+        font-size: 20px; /* Chữ to đùng */
     }
     
-    /* Thu hẹp khoảng cách cột để khít màn hình */
+    /* Tối ưu khoảng cách cột */
     [data-testid="column"] {
-        padding: 0px 1px !important;
-        min-width: 0px !important;
+        padding: 0px 2px !important;
         gap: 0px !important;
     }
     
     .kelly-box { background-color: #fff8e1; padding: 15px; border-radius: 8px; border: 2px solid #f1c40f; text-align: center; font-weight: bold; font-size: 18px; }
+    .col-hot-box { background-color: #ffcccc; border-left: 5px solid #ff0000; padding: 10px; margin-bottom: 5px; color: #990000; font-weight: bold; }
     .success-msg { color: #155724; background-color: #d4edda; border-color: #c3e6cb; padding: 10px; border-radius: 5px; margin-bottom: 10px; }
 </style>
 """, unsafe_allow_html=True)
@@ -51,7 +50,7 @@ def check_tesseract():
     return True, "✅ System OK"
 
 # ==============================================================================
-# 2. XỬ LÝ ẢNH (V9 ENGINE - GIỮ NGUYÊN)
+# 2. XỬ LÝ ẢNH (GIỮ NGUYÊN)
 # ==============================================================================
 def preprocess_image_v9(image):
     img = np.array(image.convert('RGB'))
@@ -111,7 +110,7 @@ def parse_bingo_results_v9(text, selected_date, start_draw_id):
     return results
 
 # ==============================================================================
-# 3. ANALYSIS & KELLY (V11 FULL OPTION)
+# 3. ANALYSIS TOOLS (GIỮ NGUYÊN)
 # ==============================================================================
 def calculate_z_scores(df):
     if df.empty: return None, pd.Series(), pd.Series()
@@ -123,6 +122,20 @@ def calculate_z_scores(df):
     if std == 0: return pd.Series(), pd.Series(), pd.Series()
     z_scores = (counts - mean) / std
     return z_scores, z_scores[z_scores > 1.5].sort_values(ascending=False), z_scores[z_scores < -1.5].sort_values(ascending=True)
+
+def analyze_columns(df):
+    if df.empty: return None
+    recent = df.head(10)
+    all_nums = []
+    for i in range(1, 21): all_nums.extend(recent[f'num_{i}'].tolist())
+    tail_counts = {i: 0 for i in range(10)}
+    for n in all_nums:
+        if n > 0: tail_counts[n % 10] += 1
+    return sorted(tail_counts.items(), key=lambda item: item[1], reverse=True)
+
+def get_column_numbers(tail):
+    if tail == 0: return [10, 20, 30, 40, 50, 60, 70, 80]
+    return [tail + 10*i for i in range(8)]
 
 def kelly_suggestion(win_prob, odds, bankroll):
     b = odds - 1; p = win_prob; q = 1 - p
@@ -175,20 +188,18 @@ if 'selected_algo' not in st.session_state: st.session_state.selected_algo = "�
 # ==============================================================================
 # 5. GIAO DIỆN CHÍNH
 # ==============================================================================
-st.title("🎲 BINGO V13 - MOBILE FINAL")
+st.title("🎲 BINGO V15 - NÚT TO (BIG BUTTONS)")
 df_history = load_data()
 status, msg = check_tesseract()
 
-# --- NÚT XÓA TẤT CẢ (ĐÃ KHÔI PHỤC) ---
+# NÚT XÓA TOÀN BỘ (Ở ĐẦU)
 c_del1, c_del2 = st.columns([3, 1])
 with c_del2:
-    if st.button("🚨 XÓA SẠCH DỮ LIỆU", type="primary", use_container_width=True):
-        clear_all_data()
-        st.success("Đã xóa toàn bộ!")
-        st.rerun()
+    if st.button("🚨 XÓA SẠCH", type="primary", use_container_width=True):
+        clear_all_data(); st.success("Đã xóa!"); st.rerun()
 
 with st.container(border=True):
-    t1, t2 = st.tabs(["📸 QUÉT ẢNH", "🖱️ NHẬP TAY (MOBILE)"])
+    t1, t2 = st.tabs(["📸 QUÉT ẢNH", "🖱️ NHẬP TAY (NÚT TO)"])
     
     with t1:
         c_up, c_set = st.columns([2, 1])
@@ -206,7 +217,7 @@ with st.container(border=True):
                     res = parse_bingo_results_v9(raw, s_date, start_id)
                     if res:
                         st.session_state.ocr_result = res
-                        st.markdown(f"<div class='success-msg'>✅ Tìm thấy {len(res)} dòng!</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div class='success-msg'>✅ Tìm thấy {len(res)} kỳ!</div>", unsafe_allow_html=True)
                     else: st.error("❌ Không đọc được số.")
 
         if st.session_state.ocr_result:
@@ -221,22 +232,20 @@ with st.container(border=True):
                         cnt+=1
                 if cnt: save_data(df_history); st.success(f"Lưu {cnt} kỳ!"); st.session_state.ocr_result=[]; st.rerun()
 
-    # --- TAB NHẬP TAY (LAYOUT 8x10 CHUẨN) ---
     with t2:
-        st.caption("Chế độ nhập tay nhanh (Khít màn hình điện thoại)")
         c1, c2 = st.columns([2,1])
         nid = str(int(df_history['draw_id'].max()) + 1) if not df_history.empty else ""
         mid = c1.text_input("Mã Kỳ:", value=nid)
         if c2.button("XÓA CHỌN", type="secondary", use_container_width=True): st.session_state.selected_nums = []
         
-        # --- LƯỚI SỐ 8 HÀNG x 10 CỘT ---
-        # Hàng 1: 01 -> 10. Điều này làm cho Cột 1 là: 01, 11, 21, 31... đúng ý bạn.
-        for r in range(8):
-            cols = st.columns(10)
-            for c in range(10):
-                # r=0, c=0 -> n=1. r=0, c=9 -> n=10.
-                # r=1, c=0 -> n=11.
-                n = r*10 + c + 1
+        # --- BÀN PHÍM 5 CỘT (ĐỂ NÚT TO GẤP ĐÔI) ---
+        # 80 số chia 5 cột = 16 dòng
+        # Nút sẽ rất to, dễ bấm
+        st.markdown("---")
+        for r in range(16):
+            cols = st.columns(5)
+            for c in range(5):
+                n = r*5 + c + 1
                 bg = "primary" if n in st.session_state.selected_nums else "secondary"
                 if cols[c].button(f"{n:02d}", key=f"b{n}", type=bg): toggle_number(n); st.rerun()
         
@@ -247,7 +256,7 @@ with st.container(border=True):
             save_data(pd.concat([pd.DataFrame([r]), df_history], ignore_index=True)); st.success("Lưu!"); st.rerun()
 
 # ==============================================================================
-# 6. PHÂN TÍCH V11 (FULL OPTION 1-10 SAO)
+# 6. PHÂN TÍCH V14 (FULL)
 # ==============================================================================
 st.markdown("---")
 st.header("📊 PHÂN TÍCH & DỰ ĐOÁN")
@@ -260,7 +269,7 @@ if st.button("🚀 CHẠY PHÂN TÍCH", type="primary", use_container_width=True
     else: st.error("Chưa có dữ liệu.")
 
 if st.session_state.predict_data:
-    tabs = st.tabs(["DỰ ĐOÁN", "Z-SCORE"])
+    tabs = st.tabs(["🔮 DỰ ĐOÁN", "📊 SOI CẦU CỘT", "📉 Z-SCORE"])
     
     with tabs[0]:
         c1, c2 = st.columns([2, 1])
@@ -270,10 +279,9 @@ if st.session_state.predict_data:
                 st.session_state.selected_algo = salgo
                 st.session_state.predict_data = run_prediction(df_history, salgo)
                 st.rerun()
-                
-            # --- MENU CHỌN SAO ĐẦY ĐỦ (1-10) ---
-            modes = {f"{i} Tinh": i for i in range(10, 0, -1)} # 10 xuống 1
-            smode_k = st.selectbox("Chọn dàn:", list(modes.keys()), index=4) # Mặc định 6 Tinh
+            
+            modes = {f"{i} Tinh": i for i in range(10, 0, -1)}
+            smode_k = st.selectbox("Chọn dàn:", list(modes.keys()), index=4)
             pick_n = modes[smode_k]
             
             fnums = sorted(list(st.session_state.predict_data)[:pick_n])
@@ -282,19 +290,25 @@ if st.session_state.predict_data:
                 cols[i%5].markdown(f"<div style='background-color:{'#E74C3C' if n>40 else '#3498DB'}; color:white; padding:10px; border-radius:5px; text-align:center; font-weight:bold; font-size:20px; margin-bottom:5px'>{n:02d}</div>", unsafe_allow_html=True)
         
         with c2:
-            st.subheader("💰 QUẢN LÝ VỐN")
+            st.subheader("💰 KELLY")
             my_money = st.number_input("Vốn:", value=10000, step=1000)
-            
-            # Cấu hình Kelly
-            if pick_n <= 4: ai_win = 0.55; odds_val = 2.0
-            elif pick_n <= 7: ai_win = 0.35; odds_val = 4.0
-            else: ai_win = 0.15; odds_val = 10.0
-            
+            if pick_n <= 4: ai_win=0.55; odds_val=2.0
+            elif pick_n <= 7: ai_win=0.35; odds_val=4.0
+            else: ai_win=0.15; odds_val=10.0
             kp, km = kelly_suggestion(ai_win, odds_val, my_money)
             if kp > 0: st.markdown(f"<div class='kelly-box'>ĐÁNH: {kp:.1f}%<br>${km:,.0f} TWD</div>", unsafe_allow_html=True)
             else: st.warning("Bảo toàn vốn")
 
     with tabs[1]:
+        col_anal = analyze_columns(df_history)
+        if col_anal:
+            best_tail, hit_count = col_anal[0]
+            col_nums = get_column_numbers(best_tail)
+            st.markdown(f"<div class='col-hot-box'>🔥 CỘT {best_tail} NỔ ({hit_count} lần/10 kỳ)<br>Đánh: {', '.join(map(str, col_nums))}</div>", unsafe_allow_html=True)
+            tails = [str(x[0]) for x in col_anal]; counts = [x[1] for x in col_anal]
+            st.plotly_chart(px.bar(x=tails, y=counts, labels={'x':'Cột', 'y':'Số lần'}), use_container_width=True)
+
+    with tabs[2]:
         z, h, c = st.session_state.z_score_data
         st.write("**🔥 NÓNG:** " + ", ".join([f"{n}" for n in h.index[:10]]))
         st.write("**❄️ LẠNH:** " + ", ".join([f"{n}" for n in c.index[:10]]))
