@@ -7,65 +7,49 @@ import re
 from collections import Counter
 from datetime import datetime
 import plotly.express as px
+from PIL import Image
+import pytesseract
+import cv2
 
 # ==============================================================================
 # 1. CẤU HÌNH HỆ THỐNG
 # ==============================================================================
 st.set_page_config(
-    page_title="Bingo Quantum AI - Z-Score Edition", 
+    page_title="Bingo Quantum AI - Platinum", 
     layout="wide", 
     initial_sidebar_state="collapsed"
 )
 
-# CSS Tùy chỉnh (Giao diện Chuyên gia & Nút Piano)
+# CSS Tùy chỉnh
 st.markdown("""
 <style>
-    /* Nút bấm số cao và hẹp */
     div.stButton > button:first-child {
-        min-height: 65px; 
-        width: 100%; 
-        margin: 0px 1px;
-        font-weight: bold; 
-        border-radius: 6px; 
-        font-size: 18px;
+        min-height: 65px; width: 100%; margin: 0px 1px;
+        font-weight: bold; border-radius: 6px; font-size: 18px;
     }
     .stTabs [data-baseweb="tab-list"] button [data-testid="stMarkdownContainer"] p {
         font-size: 1.1rem; font-weight: bold;
     }
     [data-testid="column"] { padding: 0px 2px; }
-    
-    /* Box hiển thị Z-Score */
-    .anomaly-box-hot { 
-        background-color: #ffe6e6; padding: 10px; border-radius: 5px; 
-        border-left: 5px solid #ff4b4b; margin-bottom: 5px; color: #c0392b;
-    }
-    .anomaly-box-cold { 
-        background-color: #e8f8f5; padding: 10px; border-radius: 5px; 
-        border-left: 5px solid #1abc9c; margin-bottom: 5px; color: #16a085;
-    }
-    
-    /* Box hiển thị Kelly */
-    .kelly-box { 
-        background-color: #fff8e1; padding: 15px; border-radius: 8px; 
-        border: 2px solid #f1c40f; text-align: center; font-weight: bold; font-size: 18px; 
-    }
+    .anomaly-box-hot { background-color: #ffe6e6; padding: 10px; border-radius: 5px; border-left: 5px solid #ff4b4b; color: #c0392b;}
+    .anomaly-box-cold { background-color: #e8f8f5; padding: 10px; border-radius: 5px; border-left: 5px solid #1abc9c; color: #16a085;}
+    .kelly-box { background-color: #fff8e1; padding: 15px; border-radius: 8px; border: 2px solid #f1c40f; text-align: center; font-weight: bold; font-size: 18px; }
+    .success-box { background-color: #d4edda; color: #155724; padding: 15px; border-radius: 5px; border: 1px solid #c3e6cb; margin-bottom: 10px; }
 </style>
 """, unsafe_allow_html=True)
 
 DATA_FILE = 'bingo_history.csv'
 
 # ==============================================================================
-# 2. QUẢN LÝ TRẠNG THÁI (SESSION STATE)
+# 2. STATE & DATA
 # ==============================================================================
 if 'selected_nums' not in st.session_state: st.session_state['selected_nums'] = [] 
 if 'predict_data' not in st.session_state: st.session_state['predict_data'] = None 
 if 'z_score_data' not in st.session_state: st.session_state['z_score_data'] = None 
 if 'selected_algo' not in st.session_state: st.session_state['selected_algo'] = "🔮 AI Master (Tổng Hợp)"
 if 'paste_key_id' not in st.session_state: st.session_state['paste_key_id'] = 0
+if 'ocr_result' not in st.session_state: st.session_state['ocr_result'] = [] # Lưu kết quả quét ảnh
 
-# ==============================================================================
-# 3. CÁC HÀM XỬ LÝ DỮ LIỆU
-# ==============================================================================
 def load_data():
     num_cols = [f'num_{i}' for i in range(1, 21)]
     columns = ['draw_id', 'time'] + num_cols + ['super_num']
@@ -98,67 +82,117 @@ def toggle_number(num):
 def clear_selection(): st.session_state['selected_nums'] = []
 def clear_paste_box(): st.session_state['paste_key_id'] += 1
 
+# ==============================================================================
+# 3. OCR & PARSER ENGINE (TRÁI TIM CỦA HỆ THỐNG)
+# ==============================================================================
+def preprocess_image(image):
+    """Xử lý ảnh để OCR đọc tốt hơn"""
+    # Chuyển PIL Image sang OpenCV format
+    img_cv = np.array(image)
+    img_cv = cv2.cvtColor(img_cv, cv2.COLOR_RGB2BGR)
+    
+    # Chuyển sang ảnh xám
+    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+    
+    # Khử nhiễu và tăng tương phản (Thresholding)
+    # Dùng Otsu's binarization để tự động tìm ngưỡng
+    _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    
+    return thresh
+
+def extract_text_from_image(image):
+    """Đọc chữ từ ảnh"""
+    try:
+        processed_img = preprocess_image(image)
+        # Cấu hình Tesseract: Chỉ đọc số và tiếng Anh cơ bản, chế độ layout thưa
+        custom_config = r'--oem 3 --psm 6' 
+        text = pytesseract.image_to_string(processed_img, config=custom_config)
+        return text
+    except Exception as e:
+        return f"Error OCR: {e}"
+
 def parse_multi_draws(text, selected_date):
+    """Phân tích văn bản (từ Paste hoặc OCR) ra dữ liệu số"""
     results = []
-    # Regex tìm mã kỳ bắt đầu bằng 114...
+    
+    # Bước 1: Vệ sinh văn bản (Sửa lỗi OCR thường gặp)
+    text = text.replace('O', '0').replace('o', '0')
+    text = text.replace('l', '1').replace('I', '1')
+    text = text.replace('B', '8')
+    text = text.replace('S', '5')
+    
+    # Bước 2: Tìm các cụm có khả năng là mã kỳ (114xxxxxx)
+    # Regex linh hoạt hơn chút cho OCR
     matches = list(re.finditer(r'\b114\d{6}\b', text))
+    
+    # Nếu không tìm thấy mã chuẩn, thử tìm chuỗi 9 số bất kỳ đầu 114
+    if not matches:
+        matches = list(re.finditer(r'114\d{6}', text))
+
     for i in range(len(matches)):
         try:
-            did = int(matches[i].group())
+            did_str = matches[i].group()
+            did = int(did_str)
+            
+            # Xác định vùng dữ liệu của kỳ này
             s = matches[i].end()
             e = matches[i+1].start() if i + 1 < len(matches) else len(text)
             seg = text[s:e]
-            nums = sorted(list(set([int(n) for n in re.findall(r'\d{2}', seg) if 1 <= int(n) <= 80]))[:20])
-            if len(nums) >= 15:
-                results.append({'draw_id': did, 'time': datetime.combine(selected_date, datetime.now().time()), 'nums': nums, 'super_num': nums[-1]})
+            
+            # Tìm tất cả số có 1-2 chữ số trong vùng đó
+            raw_nums = re.findall(r'\b\d{1,2}\b', seg)
+            
+            # Lọc số hợp lệ (1-80)
+            valid_nums = []
+            for n in raw_nums:
+                val = int(n)
+                if 1 <= val <= 80:
+                    valid_nums.append(val)
+            
+            # Loại bỏ trùng lặp và lấy 20 số đầu tiên
+            unique_nums = []
+            seen = set()
+            for n in valid_nums:
+                if n not in seen:
+                    unique_nums.append(n)
+                    seen.add(n)
+                if len(unique_nums) == 20:
+                    break
+            
+            # Chỉ chấp nhận nếu tìm thấy đủ nhiều số (ít nhất 15 số)
+            if len(unique_nums) >= 15:
+                # Sắp xếp lại cho đẹp
+                final_nums = sorted(unique_nums)
+                # Số siêu cấp thường là số cuối cùng hoặc số đặc biệt, ở đây tạm lấy số cuối
+                super_n = final_nums[-1] if final_nums else 0
+                
+                results.append({
+                    'draw_id': did, 
+                    'time': datetime.combine(selected_date, datetime.now().time()), 
+                    'nums': final_nums, 
+                    'super_num': super_n
+                })
         except: continue
     return results
 
 # ==============================================================================
-# 4. MODULE PHÂN TÍCH Z-SCORE & KELLY
+# 4. MODULE PHÂN TÍCH (GIỮ NGUYÊN)
 # ==============================================================================
 def calculate_z_scores(df):
-    """Tính toán Z-Score cho 80 số dựa trên 30 kỳ gần nhất"""
     if df.empty: return None, [], []
-    
     recent = df.head(30)
     all_nums = []
     for i in range(1, 21): all_nums.extend(recent[f'num_{i}'].tolist())
-    
-    # Đếm số lần xuất hiện
     counts = pd.Series(all_nums).value_counts().reindex(range(1, 81), fill_value=0)
-    
-    # Thống kê cơ bản
-    mean = counts.mean() # Trung bình
-    std = counts.std()   # Độ lệch chuẩn
-    
-    # Tính Z-Score: (Giá trị - Trung bình) / Độ lệch chuẩn
+    mean = counts.mean(); std = counts.std()
     z_scores = (counts - mean) / std
-    
-    # Lọc Dị Biệt (Anomalies)
-    hot_anomalies = z_scores[z_scores > 1.5].sort_values(ascending=False)
-    cold_anomalies = z_scores[z_scores < -1.5].sort_values(ascending=True)
-    
-    return z_scores, hot_anomalies, cold_anomalies
+    return z_scores, z_scores[z_scores > 1.5].sort_values(ascending=False), z_scores[z_scores < -1.5].sort_values(ascending=True)
 
 def kelly_criterion_suggestion(win_prob, odds, bankroll):
-    """
-    Công thức Kelly: f = (bp - q) / b
-    """
-    b = odds - 1  # Tỷ lệ cược ròng
-    p = win_prob  # Xác suất thắng
-    q = 1 - p     # Xác suất thua
-    
+    b = odds - 1; p = win_prob; q = 1 - p
     f = (b * p - q) / b
-    
-    # Kelly An Toàn (Half Kelly) để giảm rủi ro
-    safe_f = f * 0.5 
-    
-    # Nếu âm thì trả về 0
-    if safe_f < 0: safe_f = 0
-    
-    bet_amount = bankroll * safe_f
-    return safe_f * 100, bet_amount
+    safe_f = max(0, f * 0.5)
+    return safe_f * 100, bankroll * safe_f
 
 def run_prediction(df, strategy):
     if df.empty: return []
@@ -183,23 +217,88 @@ def run_prediction(df, strategy):
 # ==============================================================================
 # 5. GIAO DIỆN CHÍNH (UI)
 # ==============================================================================
-st.title("🎲 BINGO QUANTUM - Z-SCORE EDITION")
+st.title("🎲 BINGO QUANTUM - PLATINUM EDITION")
 df_history = load_data()
 
 # --- KHU VỰC NHẬP LIỆU ---
 with st.container(border=True):
-    t1, t2 = st.tabs(["🖱️ BÀN PHÍM SỐ", "📋 DÁN (COPY)"])
+    t1, t2, t3 = st.tabs(["📸 QUÉT ẢNH (SCAN)", "🖱️ BÀN PHÍM SỐ", "📋 DÁN (COPY)"])
     
-    # Tab Nhập Tay
+    # --- TAB 1: SCAN ẢNH (MỚI) ---
     with t1:
+        st.caption("Upload ảnh chụp kết quả xổ số (Rõ nét). Hệ thống sẽ tự đọc số.")
+        col_up1, col_up2 = st.columns([2, 1])
+        with col_up1:
+            uploaded_file = st.file_uploader("Chọn ảnh:", type=['png', 'jpg', 'jpeg'])
+            scan_date = st.date_input("Ngày trên ảnh:", datetime.now(), key="scan_date")
+        
+        if uploaded_file is not None:
+            image = Image.open(uploaded_file)
+            st.image(image, caption='Ảnh đã tải lên', use_container_width=True)
+            
+            if st.button("🔍 BẮT ĐẦU QUÉT SỐ", type="primary"):
+                with st.spinner("AI đang đọc ảnh..."):
+                    # 1. Trích xuất văn bản
+                    raw_text = extract_text_from_image(image)
+                    # st.text_area("Debug Text (Nếu cần):", raw_text) # Uncomment để debug
+                    
+                    # 2. Phân tích số liệu
+                    extracted_data = parse_multi_draws(raw_text, scan_date)
+                    
+                    if extracted_data:
+                        st.session_state['ocr_result'] = extracted_data
+                        st.success(f"Đã tìm thấy {len(extracted_data)} kỳ quay!")
+                    else:
+                        st.error("Không tìm thấy dữ liệu hợp lệ. Hãy thử chụp ảnh rõ hơn hoặc crop sát bảng số.")
+
+        # Hiển thị kết quả quét và nút Lưu
+        if st.session_state['ocr_result']:
+            st.markdown("---")
+            st.write("### 📝 Kết quả đọc được:")
+            
+            # Cho phép user sửa lại nếu máy đọc sai
+            for i, item in enumerate(st.session_state['ocr_result']):
+                with st.expander(f"Kỳ {item['draw_id']} (Đọc được {len(item['nums'])} số)", expanded=True):
+                    # Hiển thị các số dưới dạng string để user có thể sửa
+                    nums_str = ", ".join([str(n) for n in item['nums']])
+                    new_nums_str = st.text_input(f"Dãy số kỳ {item['draw_id']}:", value=nums_str, key=f"edit_ocr_{i}")
+                    
+                    # Cập nhật lại list số nếu user sửa
+                    try:
+                        new_nums = sorted([int(n.strip()) for n in new_nums_str.split(',') if n.strip().isdigit()])
+                        st.session_state['ocr_result'][i]['nums'] = new_nums
+                    except: pass
+
+            if st.button("💾 LƯU TẤT CẢ VÀO LỊCH SỬ", type="primary", key="save_ocr"):
+                added = 0
+                for item in st.session_state['ocr_result']:
+                    if df_history.empty or item['draw_id'] not in df_history['draw_id'].values:
+                        r = {'draw_id': item['draw_id'], 'time': item['time'], 'super_num': item['super_num']}
+                        for i, v in enumerate(item['nums']): 
+                            # Đảm bảo đủ 20 cột, thiếu thì điền 0
+                            if i < 20: r[f'num_{i+1}'] = v
+                        # Điền nốt nếu thiếu số (tránh lỗi)
+                        for k in range(len(item['nums']) + 1, 21): r[f'num_{k}'] = 0
+                            
+                        df_history = pd.concat([pd.DataFrame([r]), df_history], ignore_index=True)
+                        added += 1
+                
+                if added > 0:
+                    save_data(df_history)
+                    st.success(f"Đã lưu thành công {added} kỳ mới!")
+                    st.session_state['ocr_result'] = [] # Reset sau khi lưu
+                    st.rerun()
+                else:
+                    st.warning("Các kỳ này đã có trong lịch sử rồi!")
+
+    # --- TAB 2: NHẬP TAY (GIỮ NGUYÊN) ---
+    with t2:
         c1, c2, c3 = st.columns([2, 2, 1])
         with c1: 
             nid = str(int(df_history['draw_id'].max()) + 1) if not df_history.empty else ""
             mid = st.text_input("Mã Kỳ:", value=nid, key="mid")
         with c2: mdate = st.date_input("Ngày:", datetime.now(), key="mdate")
-        with c3: 
-            st.write(""); st.write("")
-            st.button("Xóa chọn", key="b_clr", on_click=clear_selection)
+        with c3: st.write(""); st.write(""); st.button("Xóa chọn", key="b_clr", on_click=clear_selection)
         
         st.markdown(f"**🔢 Đã chọn: <span style='color:red'>{len(st.session_state['selected_nums'])}/20</span>**", unsafe_allow_html=True)
         for r in range(8):
@@ -223,8 +322,8 @@ with st.container(border=True):
                 save_data(pd.concat([pd.DataFrame([row]), df_history], ignore_index=True))
                 st.success("Đã lưu!"); clear_selection(); st.rerun()
 
-    # Tab Copy Paste
-    with t2:
+    # --- TAB 3: DÁN COPY (GIỮ NGUYÊN) ---
+    with t3:
         c1, c2 = st.columns([3, 1])
         with c1: pdate = st.date_input("Ngày:", datetime.now(), key="pdate")
         with c2: st.button("🗑 Xóa ô dán", on_click=clear_paste_box, use_container_width=True)
@@ -255,47 +354,33 @@ if st.button("🚀 CHẠY PHÂN TÍCH TOÀN DIỆN", type="primary", use_contain
 
 if st.session_state['predict_data'] or not df_history.empty:
     st.markdown("---")
-    rt1, rt2 = st.tabs(["📉 PHÂN TÍCH Z-SCORE (DỊ BIỆT)", "🎯 DỰ ĐOÁN & QUẢN LÝ VỐN"])
+    rt1, rt2 = st.tabs(["📉 PHÂN TÍCH Z-SCORE", "🎯 DỰ ĐOÁN & KELLY"])
     
-    # --- TAB Z-SCORE ---
     with rt1:
         st.subheader("🔍 Tìm Kiếm Sự Dị Biệt (Statistical Anomalies)")
-        st.caption("Dựa trên 30 kỳ gần nhất. Z-Score đo lường độ lệch chuẩn.")
-        
         if st.session_state['z_score_data']:
             z_all, hots, colds = st.session_state['z_score_data']
-            
             c_hot, c_cold = st.columns(2)
             with c_hot:
                 st.markdown("#### 🔥 SỐ 'NÓNG' BẤT THƯỜNG (Z > 1.5)")
-                st.write("👉 *Chiến thuật: Bám theo dây đỏ (Đánh tiếp)*")
                 if not hots.empty:
-                    for n, score in hots.items():
-                        st.markdown(f"<div class='anomaly-box-hot'>🔴 Số <b>{n:02d}</b> (Z-Score: {score:.2f}) - Siêu Hot</div>", unsafe_allow_html=True)
-                else: st.info("Không có số nào nóng bất thường.")
-                
+                    for n, score in hots.items(): st.markdown(f"<div class='anomaly-box-hot'>🔴 Số <b>{n:02d}</b> (Z: {score:.2f})</div>", unsafe_allow_html=True)
+                else: st.info("Không có.")
             with c_cold:
                 st.markdown("#### ❄️ SỐ 'LẠNH' BẤT THƯỜNG (Z < -1.5)")
-                st.write("👉 *Chiến thuật: Nuôi gấp thếp (Sắp nổ)*")
                 if not colds.empty:
-                    for n, score in colds.items():
-                        st.markdown(f"<div class='anomaly-box-cold'>🔵 Số <b>{n:02d}</b> (Z-Score: {score:.2f}) - Siêu Lạnh</div>", unsafe_allow_html=True)
-                else: st.info("Không có số nào lạnh bất thường.")
-                
+                    for n, score in colds.items(): st.markdown(f"<div class='anomaly-box-cold'>🔵 Số <b>{n:02d}</b> (Z: {score:.2f})</div>", unsafe_allow_html=True)
+                else: st.info("Không có.")
+            
             st.markdown("---")
-            st.markdown("##### 📈 Biểu đồ phân phối Z-Score (Toàn bộ 80 số)")
-            fig = px.bar(x=z_all.index, y=z_all.values, labels={'x': 'Số (1-80)', 'y': 'Z-Score'}, color=z_all.values, color_continuous_scale='RdBu_r')
+            fig = px.bar(x=z_all.index, y=z_all.values, labels={'x': 'Số', 'y': 'Z-Score'}, color=z_all.values, color_continuous_scale='RdBu_r')
             st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("Vui lòng bấm 'Chạy Phân Tích' để xem.")
+        else: st.info("Chưa chạy phân tích.")
 
-    # --- TAB DỰ ĐOÁN & KELLY ---
     with rt2:
         c1, c2 = st.columns([2, 1])
-        
-        # Phần Dự Đoán
         with c1:
-            st.subheader("KẾT QUẢ DỰ ĐOÁN AI")
+            st.subheader("KẾT QUẢ DỰ ĐOÁN")
             algos = ["🔮 AI Master (Tổng Hợp)", "🔥 Soi Cầu Nóng (Hot)", "❄️ Soi Cầu Lạnh (Nuôi)", "♻️ Soi Cầu Bệt (Lại)"]
             salgo = st.selectbox("Thuật toán:", algos, index=0)
             if salgo != st.session_state['selected_algo']:
@@ -311,40 +396,17 @@ if st.session_state['predict_data'] or not df_history.empty:
                 for i, n in enumerate(fnums): 
                     cols[i%5].markdown(f"<div style='background-color:{'#E74C3C' if n>40 else '#3498DB'}; color:white; padding:10px; border-radius:5px; text-align:center; font-weight:bold; font-size:20px; margin-bottom:5px'>{n:02d}</div>", unsafe_allow_html=True)
 
-        # Phần Quản Lý Vốn Kelly (ĐÃ SỬA LỖI HIỂN THỊ)
         with c2:
             st.subheader("💰 QUẢN LÝ VỐN (KELLY)")
-            st.caption("Gợi ý số tiền đánh dựa trên giả định AI có tỷ lệ thắng tốt.")
-            
-            my_money = st.number_input("Vốn hiện có (Đài tệ):", value=10000, step=1000)
-            
-            # --- CẤU HÌNH NIỀM TIN VÀO AI ---
-            # Để Kelly gợi ý tiền, ta giả định AI giúp tăng tỷ lệ thắng lên > 50%
-            ai_win_rate = 0.55  # Giả định AI thắng 55%
-            odds_val = 2.0      # Tỷ lệ 1 ăn 2
-            
-            if smode == "6 Tinh": 
-                ai_win_rate = 0.35 # 6 Tinh khó hơn
-                odds_val = 4.0     # Nhưng ăn đậm hơn
-            
-            kelly_pct, kelly_money = kelly_criterion_suggestion(win_prob=ai_win_rate, odds=odds_val, bankroll=my_money)
-            
-            if kelly_pct > 0:
-                color_money = "#27ae60"
-                st.markdown(f"""
-                <div class='kelly-box'>
-                    💡 GỢI Ý ĐI TIỀN:<br>
-                    <span style='color:#e67e22; font-size: 24px'>{kelly_pct:.1f}% Vốn</span><br>
-                    Tương đương: <span style='color:{color_money}; font-size: 24px'>${kelly_money:,.0f} TWD</span>
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.warning("⚠️ Rủi ro cao. Kelly khuyên bảo toàn vốn.")
-            
-            st.info("ℹ️ Lưu ý: Mức cược này dựa trên giả định AI dự đoán chính xác hơn ngẫu nhiên.")
+            my_money = st.number_input("Vốn (Đài tệ):", value=10000, step=1000)
+            ai_win_rate = 0.55; odds_val = 2.0
+            if smode == "6 Tinh": ai_win_rate = 0.35; odds_val = 4.0
+            k_pct, k_mon = kelly_criterion_suggestion(ai_win_rate, odds_val, my_money)
+            if k_pct > 0:
+                st.markdown(f"<div class='kelly-box'>💡 GỢI Ý:<br><span style='color:#e67e22'>{k_pct:.1f}% Vốn</span><br><span style='color:#27ae60'>${k_mon:,.0f} TWD</span></div>", unsafe_allow_html=True)
+            else: st.warning("Bảo toàn vốn.")
 
-# --- LỊCH SỬ ---
 st.markdown("---")
-with st.expander("LỊCH SỬ KỲ QUAY"):
+with st.expander("LỊCH SỬ"):
     if st.button("Xóa kỳ cuối"): delete_last_row(); st.rerun()
     if not df_history.empty: st.dataframe(df_history, use_container_width=True, hide_index=True)
