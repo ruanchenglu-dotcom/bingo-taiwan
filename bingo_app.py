@@ -13,15 +13,14 @@ import pytesseract
 import cv2
 
 # ==============================================================================
-# 1. CẤU HÌNH & KIỂM TRA HỆ THỐNG
+# 1. CẤU HÌNH & HỆ THỐNG
 # ==============================================================================
-st.set_page_config(page_title="Bingo AI - V7 Parser", layout="wide")
+st.set_page_config(page_title="Bingo AI - V8 Final Cut", layout="wide")
 
 st.markdown("""
 <style>
     div.stButton > button:first-child { min-height: 65px; width: 100%; margin: 0px 1px; font-weight: bold; border-radius: 6px; font-size: 18px; }
-    .kelly-box { background-color: #fff8e1; padding: 15px; border-radius: 8px; border: 2px solid #f1c40f; text-align: center; font-weight: bold; font-size: 18px; }
-    .raw-text-box { background-color: #f8f9fa; border: 1px solid #ddd; padding: 10px; font-family: monospace; font-size: 12px; height: 150px; overflow-y: scroll; }
+    .raw-text-box { background-color: #f8f9fa; border: 1px solid #ddd; padding: 10px; font-family: monospace; font-size: 12px; height: 150px; overflow-y: scroll; white-space: pre-wrap;}
 </style>
 """, unsafe_allow_html=True)
 
@@ -29,88 +28,95 @@ DATA_FILE = 'bingo_history.csv'
 
 def check_tesseract():
     path = shutil.which("tesseract")
-    if path is None: return False, "❌ LỖI: Chưa cài Tesseract! (Xem lại file packages.txt)"
-    return True, f"✅ System OK"
+    if path is None: return False, "❌ LỖI: Chưa cài Tesseract!"
+    return True, "✅ System OK"
 
 # ==============================================================================
-# 2. XỬ LÝ ẢNH (GIỮ NGUYÊN V5 VÌ ĐÃ RẤT TỐT)
+# 2. XỬ LÝ ẢNH (V8 - GIẢM ĐỘ DÍNH)
 # ==============================================================================
-def preprocess_image_v7(image):
-    # Upscale & HSV Filter (Công nghệ lọc màu lửa/bóng)
+def preprocess_image_v8(image):
+    # Upscale ảnh
     img = np.array(image.convert('RGB'))
     img = cv2.resize(img, None, fx=2.5, fy=2.5, interpolation=cv2.INTER_CUBIC)
     hsv = cv2.cvtColor(img, cv2.COLOR_RGB2HSV)
     
-    # Lọc lấy màu trắng (Số) - Loại bỏ lửa vàng/bóng xanh đỏ
+    # Lọc màu trắng (Số)
     lower_white = np.array([0, 0, 130]) 
     upper_white = np.array([180, 80, 255])
     mask = cv2.inRange(hsv, lower_white, upper_white)
     
-    # Khử nhiễu
-    kernel = np.ones((2,2), np.uint8)
-    mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    
     # Đảo màu (Chữ đen nền trắng)
     result = cv2.bitwise_not(mask)
-    result = cv2.copyMakeBorder(result, 20, 20, 20, 20, cv2.BORDER_CONSTANT, value=255)
+    
+    # Quan trọng: Thêm viền trắng để số không bị sát mép
+    result = cv2.copyMakeBorder(result, 30, 30, 30, 30, cv2.BORDER_CONSTANT, value=255)
     return result
 
-def extract_text_v7(image):
+def extract_text_v8(image):
     try:
-        processed_img = preprocess_image_v7(image)
-        st.image(processed_img, caption="Ảnh máy tính nhìn thấy (Đã lọc sạch)", width=600)
+        processed_img = preprocess_image_v8(image)
+        st.image(processed_img, caption="Ảnh đã xử lý (V8)", width=600)
         
-        config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789: '
+        # Cấu hình mới: preserve_interword_spaces=1 để cố gắng giữ khoảng cách
+        config = r'--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789: preserve_interword_spaces=1'
         text = pytesseract.image_to_string(processed_img, config=config)
         return text
     except Exception as e:
         return f"ERROR: {str(e)}"
 
 # ==============================================================================
-# 3. BỘ PHÂN TÍCH THÔNG MINH (PARSER V7 - NEW)
+# 3. BỘ PHÂN TÍCH V8 (CẮT CHUỖI THÔNG MINH)
 # ==============================================================================
-def parse_bingo_results_v7(text, selected_date):
+def parse_bingo_results_v8(text, selected_date):
     results = []
-    
-    # Tách văn bản thành từng dòng (Line-by-line Parsing)
     lines = text.split('\n')
     
     for line in lines:
         if not line.strip(): continue
         
-        # Vệ sinh dòng chữ
-        line = line.replace('O', '0').replace('o', '0').replace('l', '1').replace('I', '1').replace('|', '1').replace('S','5')
+        # 1. Vệ sinh dòng chữ
+        clean_line = line.replace('O', '0').replace('o', '0').replace('l', '1').replace('I', '1').replace('|', '1').replace('S','5')
         
-        # Tìm tất cả các con số trong dòng này
-        # \d+ nghĩa là tìm mọi cụm số (kể cả 114072761 hay 04, 09...)
-        all_numbers_in_line = re.findall(r'\d+', line)
-        
-        if not all_numbers_in_line: continue
-        
-        # Chuyển thành số nguyên
-        nums_int = []
-        for n in all_numbers_in_line:
-            try: nums_int.append(int(n))
-            except: pass
-            
-        # CHIẾN THUẬT:
-        # 1. Tìm Mã Kỳ: Thường là số rất lớn (> 100 triệu) và bắt đầu bằng 11...
-        # 2. Tìm Dãy Số: Các số từ 1-80
+        # 2. TÌM MÃ KỲ (114xxxxxx)
+        # Tìm cụm số bắt đầu bằng 114 và dài ít nhất 9 ký tự
+        # Kể cả khi nó dính liền với giờ (vd: 1140727611415)
+        match_id = re.search(r'114\d{6,}', clean_line)
         
         draw_id = 0
+        if match_id:
+            raw_id_str = match_id.group()
+            # Chỉ lấy 9 ký tự đầu tiên làm Mã Kỳ
+            draw_id_str = raw_id_str[:9]
+            draw_id = int(draw_id_str)
+            
+            # Xóa mã kỳ khỏi dòng để tránh đọc nhầm vào số lô tô
+            clean_line = clean_line.replace(raw_id_str, "")
+        
+        # 3. XỬ LÝ DÃY SỐ (CẮT CHUỖI DÍNH)
+        # Tìm tất cả cụm số còn lại
+        raw_chunks = re.findall(r'\d+', clean_line)
+        
         bingo_nums = []
+        for chunk in raw_chunks:
+            # Nếu cụm số dài (ví dụ 040915...), cắt ra từng cặp 2 số
+            if len(chunk) > 2:
+                # Cắt từng khúc 2 ký tự: 04, 09, 15...
+                split_nums = [chunk[i:i+2] for i in range(0, len(chunk), 2)]
+                for n_str in split_nums:
+                    try:
+                        val = int(n_str)
+                        if 1 <= val <= 80: bingo_nums.append(val)
+                    except: pass
+            else:
+                # Nếu cụm số ngắn (1 hoặc 2 ký tự), lấy luôn
+                try:
+                    val = int(chunk)
+                    if 1 <= val <= 80: bingo_nums.append(val)
+                except: pass
         
-        for n in nums_int:
-            # Nếu là số lớn (Mã kỳ 9 chữ số, vd: 114072761)
-            if n > 110000000 and n < 120000000:
-                draw_id = n
-            # Nếu là số nhỏ (1-80) -> Số lô tô
-            elif 1 <= n <= 80:
-                bingo_nums.append(n)
-        
-        # Nếu dòng này tìm thấy Mã Kỳ VÀ có nhiều số lô tô -> Đây là 1 dòng kết quả!
+        # 4. LƯU KẾT QUẢ NẾU HỢP LỆ
         if draw_id > 0 and len(bingo_nums) >= 15:
-            # Lọc trùng
+            # Lọc trùng giữ thứ tự
             unique = []
             seen = set()
             for x in bingo_nums:
@@ -118,12 +124,10 @@ def parse_bingo_results_v7(text, selected_date):
                     unique.append(x)
                     seen.add(x)
             
-            # Tách số siêu cấp
-            # 20 số đầu là chính
+            # Tách số siêu cấp (số thứ 21)
             main_20 = sorted(unique[:20])
             while len(main_20) < 20: main_20.append(0)
             
-            # Số thứ 21 là siêu cấp (nếu có)
             super_n = unique[20] if len(unique) > 20 else 0
             
             results.append({
@@ -136,16 +140,14 @@ def parse_bingo_results_v7(text, selected_date):
     return results
 
 # ==============================================================================
-# 4. CORE LOGIC (GIỮ NGUYÊN)
+# 4. LOGIC CŨ (GIỮ NGUYÊN)
 # ==============================================================================
 def load_data():
     num_cols = [f'num_{i}' for i in range(1, 21)]
     columns = ['draw_id', 'time'] + num_cols + ['super_num']
     df = pd.DataFrame(columns=columns)
     if os.path.exists(DATA_FILE):
-        try:
-            loaded_df = pd.read_csv(DATA_FILE)
-            if not loaded_df.empty: df = loaded_df
+        try: loaded_df = pd.read_csv(DATA_FILE); df = loaded_df if not loaded_df.empty else df
         except: pass
     if 'draw_id' in df.columns: df['draw_id'] = pd.to_numeric(df['draw_id'], errors='coerce').fillna(0).astype(int)
     if 'time' in df.columns: df['time'] = pd.to_datetime(df['time'], errors='coerce')
@@ -162,14 +164,12 @@ if 'selected_nums' not in st.session_state: st.session_state.selected_nums = []
 if 'ocr_result' not in st.session_state: st.session_state.ocr_result = []
 
 # --- UI ---
-st.title("🎲 BINGO V7 - PARSER FIX")
+st.title("🎲 BINGO V8 - FINAL CUT")
 df_history = load_data()
-
 status, msg = check_tesseract()
-if not status: st.error(msg)
 
 with st.container(border=True):
-    t1, t2 = st.tabs(["📸 QUÉT ẢNH (V7)", "⚙️ NHẬP TAY / KHÁC"])
+    t1, t2 = st.tabs(["📸 QUÉT ẢNH (V8)", "⚙️ NHẬP LIỆU"])
     
     with t1:
         up_file = st.file_uploader("Upload ảnh:", type=['png','jpg','jpeg'])
@@ -178,22 +178,16 @@ with st.container(border=True):
         if up_file and st.button("🔍 QUÉT NGAY"):
             if status:
                 img = Image.open(up_file)
-                st.image(img, caption='Ảnh gốc', width=200)
-                
-                with st.spinner("Đang xử lý..."):
-                    raw_txt = extract_text_v7(img)
-                    
-                    # Hiện Text thô để debug
-                    st.caption("🔍 Dữ liệu máy đọc được (Raw Text):")
+                with st.spinner("Đang cắt chuỗi số dính..."):
+                    raw_txt = extract_text_v8(img)
                     st.markdown(f"<div class='raw-text-box'>{raw_txt}</div>", unsafe_allow_html=True)
-                    
-                    res = parse_bingo_results_v7(raw_txt, s_date)
+                    res = parse_bingo_results_v8(raw_txt, s_date)
                     
                     if res:
                         st.session_state.ocr_result = res
-                        st.success(f"✅ THÀNH CÔNG! Đọc được {len(res)} kỳ.")
+                        st.success(f"✅ ĐÃ ĐỌC ĐƯỢC {len(res)} KỲ! (Đã xử lý lỗi dính chữ)")
                     else:
-                        st.error("❌ Không tìm thấy mã kỳ hợp lệ (114xxxxxx) trong đoạn văn bản trên.")
+                        st.error("❌ Không tìm thấy mã kỳ 114xxxxxx.")
 
         if st.session_state.ocr_result:
             for i, it in enumerate(st.session_state.ocr_result):
@@ -219,7 +213,6 @@ with st.container(border=True):
                 else: st.warning("Dữ liệu đã có!")
 
     with t2:
-        # Nhập tay & Dán (Giữ nguyên cho gọn)
         c1, c2, c3 = st.columns([2,2,1])
         nid = str(int(df_history['draw_id'].max()) + 1) if not df_history.empty else ""
         mid = c1.text_input("Mã Kỳ:", value=nid)
@@ -236,11 +229,7 @@ with st.container(border=True):
             for i,v in enumerate(sorted(st.session_state.selected_nums)): r[f'num_{i+1}'] = v
             save_data(pd.concat([pd.DataFrame([r]), df_history], ignore_index=True)); st.success("Lưu!"); st.rerun()
 
-# --- PHÂN TÍCH (GIỮ NGUYÊN) ---
+# --- ANALYSIS SECTION ---
 st.markdown("---")
-if st.button("🚀 PHÂN TÍCH", type="primary"):
-    # (Phần phân tích như cũ, lược bỏ cho gọn code hiển thị)
-    st.info("Chức năng phân tích vẫn hoạt động bình thường như các bản trước.")
-
 with st.expander("Lịch sử"):
     st.dataframe(df_history, use_container_width=True)
