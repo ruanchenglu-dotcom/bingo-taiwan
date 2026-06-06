@@ -304,13 +304,36 @@ def run_ensemble_prediction(df):
     if ml_preds:
         for i, n in enumerate(ml_preds): ml_scores[n] = 80 - i
     markov_scores = {n: 0 for n in range(1, 81)}
-    last_nums = [df.iloc[0][f'num_{k}'] for k in range(1, 21)]
+    last_nums = []
+    for k in range(1, 21):
+        try:
+            val = int(float(df.iloc[0][f'num_{k}']))
+            if 1 <= val <= 80: last_nums.append(val)
+        except: pass
+
     transitions = {n: {m: 0 for m in range(1, 81)} for n in range(1, 81)}
     for i in range(min(100, len(df)-1)):
-        curr = [df.iloc[i][f'num_{k}'] for k in range(1, 21)]
-        prev = [df.iloc[i+1][f'num_{k}'] for k in range(1, 21)]
+        curr_row = df.iloc[i]
+        prev_row = df.iloc[i+1]
+        
+        curr = []
+        for k in range(1, 21):
+            try:
+                val = int(float(curr_row[f'num_{k}']))
+                if 1 <= val <= 80: curr.append(val)
+            except: pass
+            
+        prev = []
+        for k in range(1, 21):
+            try:
+                val = int(float(prev_row[f'num_{k}']))
+                if 1 <= val <= 80: prev.append(val)
+            except: pass
+            
         for p in prev:
-            for c in curr: transitions[p][c] += 1
+            for c in curr: 
+                transitions[p][c] += 1
+                
     for n in range(1, 81): markov_scores[n] = sum([transitions[p][n] for p in last_nums])
     max_m = max(markov_scores.values()) if max(markov_scores.values()) > 0 else 1
     final_scores = {}
