@@ -121,38 +121,47 @@ def fetch_auzo_bingo():
         import requests
         import re
         from bs4 import BeautifulSoup
-        today = datetime.now().strftime('%Y%m%d')
-        url = f'https://lotto.auzo.tw/bingobingo/list_{today}.html'
-        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
-        soup = BeautifulSoup(r.text, 'html.parser')
-        rows = soup.find_all('tr', class_='bingo_row')
-        results = []
-        for row in rows:
-            period_td = row.find('td', class_='BPeriod')
-            if not period_td: continue
-            b_tag = period_td.find('b')
-            if not b_tag: continue
-            draw_id_str = b_tag.text.strip()
-            if not re.match(r'11[45]\d{6}', draw_id_str): continue
-            draw_id = int(draw_id_str)
-            
-            tds = row.find_all('td')
-            if len(tds) < 2: continue
-            divs = tds[1].find_all('div')
-            nums = []
-            super_num = None
-            for div in divs:
-                n = div.text.strip()
-                if n.isdigit():
-                    val = int(n)
-                    nums.append(val)
-                    cls = div.get('class', [''])[0]
-                    if 's' in cls:
-                        super_num = val
-            if len(nums) >= 15:
-                if super_num is None: super_num = nums[-1]
-                results.append({'draw_id': draw_id, 'time': datetime.now(), 'nums': nums, 'super_num': super_num})
+        from datetime import timedelta
         
+        now = datetime.now()
+        results = []
+        
+        for d in [now, now - timedelta(days=1)]:
+            date_str = d.strftime('%Y%m%d')
+            url = f'https://lotto.auzo.tw/bingobingo/list_{date_str}.html'
+            r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+            soup = BeautifulSoup(r.text, 'html.parser')
+            rows = soup.find_all('tr', class_='bingo_row')
+            
+            for row in rows:
+                period_td = row.find('td', class_='BPeriod')
+                if not period_td: continue
+                b_tag = period_td.find('b')
+                if not b_tag: continue
+                draw_id_str = b_tag.text.strip()
+                if not re.match(r'11[45]\d{6}', draw_id_str): continue
+                draw_id = int(draw_id_str)
+                
+                tds = row.find_all('td')
+                if len(tds) < 2: continue
+                divs = tds[1].find_all('div')
+                nums = []
+                super_num = None
+                for div in divs:
+                    n = div.text.strip()
+                    if n.isdigit():
+                        val = int(n)
+                        nums.append(val)
+                        cls = div.get('class', [''])[0]
+                        if 's' in cls:
+                            super_num = val
+                if len(nums) >= 15:
+                    if super_num is None: super_num = nums[-1]
+                    results.append({'draw_id': draw_id, 'time': datetime.now(), 'nums': nums, 'super_num': super_num})
+            
+            if len(results) > 0:
+                break
+                
         if len(results) > 0:
             results.sort(key=lambda x: x['draw_id'])
             return results, None
