@@ -572,6 +572,8 @@ if st.session_state['predict_data'] or not df_history.empty:
                 
                 st.write("")
                 st.info(calculate_optimal_frame(df_history, fnums))
+            else:
+                st.info("👆 Bấm nút '🚀 CHẠY PHÂN TÍCH TOÀN DIỆN' ở trên cùng để xem kết quả dự đoán.")
 
         # GỢI Ý ĐI TIỀN KELLY
         with c2:
@@ -628,7 +630,7 @@ if st.session_state['predict_data'] or not df_history.empty:
             st.info("Chưa có đủ dữ liệu để thống kê.")
 
 st.markdown("---")
-with st.expander("LỊCH SỬ"):
+with st.expander("LỊCH SỬ", expanded=True):
     col_del1, col_del2 = st.columns(2)
     with col_del1:
         if st.button("Xóa kỳ cuối", use_container_width=True): delete_last_row(); st.rerun()
