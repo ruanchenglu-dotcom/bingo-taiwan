@@ -5,7 +5,7 @@ import random
 import os
 import re
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 import plotly.express as px
 
 # ==============================================================================
@@ -95,7 +95,7 @@ def parse_multi_draws(text, selected_date):
             seg = text[s:e]
             nums = sorted(list(set([int(n) for n in re.findall(r'\b\d{1,2}\b', seg) if 1 <= int(n) <= 80]))[:20])
             if len(nums) >= 15:
-                results.append({'draw_id': did, 'time': datetime.combine(selected_date, datetime.now().time()), 'nums': nums, 'super_num': nums[-1]})
+                results.append({'draw_id': did, 'time': datetime.combine(selected_date, (datetime.utcnow() + timedelta(hours=8)).time()), 'nums': nums, 'super_num': nums[-1]})
         except: continue
     return results
 
@@ -123,7 +123,7 @@ def fetch_auzo_bingo():
         from bs4 import BeautifulSoup
         from datetime import timedelta
         
-        now = datetime.now()
+        now = (datetime.utcnow() + timedelta(hours=8))
         results = []
         
         for d in [now, now - timedelta(days=1)]:
@@ -157,7 +157,7 @@ def fetch_auzo_bingo():
                             super_num = val
                 if len(nums) >= 15:
                     if super_num is None: super_num = nums[-1]
-                    results.append({'draw_id': draw_id, 'time': datetime.now(), 'nums': nums, 'super_num': super_num})
+                    results.append({'draw_id': draw_id, 'time': (datetime.utcnow() + timedelta(hours=8)), 'nums': nums, 'super_num': super_num})
             
             if len(results) > 0:
                 break
@@ -424,7 +424,7 @@ with st.container(border=True):
     with t1:
         c1, c2, c3 = st.columns([2, 2, 1])
         with c1: nid = str(int(df_history['draw_id'].max()) + 1) if not df_history.empty else ""; mid = st.text_input("Mã Kỳ:", value=nid, key="mid")
-        with c2: mdate = st.date_input("Ngày:", datetime.now(), key="mdate")
+        with c2: mdate = st.date_input("Ngày:", (datetime.utcnow() + timedelta(hours=8)), key="mdate")
         with c3: st.write(""); st.write(""); st.button("Xóa chọn", key="b_clr", on_click=clear_selection)
         
         st.markdown(f"**🔢 Chọn: <span style='color:red'>{len(st.session_state['selected_nums'])}/20</span>**", unsafe_allow_html=True)
@@ -444,7 +444,7 @@ with st.container(border=True):
             if not mid or len(st.session_state['selected_nums']) != 20: st.error("Lỗi nhập liệu!")
             elif not df_history.empty and int(mid) in df_history['draw_id'].values: st.warning("Đã tồn tại!")
             else:
-                row = {'draw_id': int(mid), 'time': datetime.combine(mdate, datetime.now().time()), 'super_num': msuper}
+                row = {'draw_id': int(mid), 'time': datetime.combine(mdate, (datetime.utcnow() + timedelta(hours=8)).time()), 'super_num': msuper}
                 for i, v in enumerate(sorted(st.session_state['selected_nums'])): row[f'num_{i+1}'] = v
                 df_history = pd.concat([pd.DataFrame([row]), df_history], ignore_index=True)
                 process_new_draw_and_notify(df_history, 1, int(mid))
@@ -452,7 +452,7 @@ with st.container(border=True):
 
     with t2:
         c1, c2 = st.columns([3, 1])
-        with c1: pdate = st.date_input("Ngày:", datetime.now(), key="pdate")
+        with c1: pdate = st.date_input("Ngày:", (datetime.utcnow() + timedelta(hours=8)), key="pdate")
         with c2: st.button("🗑 Xóa ô dán", on_click=clear_paste_box, use_container_width=True)
         ptext = st.text_area("Dán dữ liệu:", height=150, key=f"parea_{st.session_state['paste_key_id']}")
         if st.button("💾 XỬ LÝ & LƯU", type="primary", use_container_width=True):
@@ -486,7 +486,7 @@ with st.container(border=True):
                         st.error(f"Lỗi đọc ảnh: {text}")
                     else:
                         st.info(f"Văn bản nhận dạng được: {text[:200]}...")
-                        ext = parse_multi_draws(text, datetime.now().date())
+                        ext = parse_multi_draws(text, (datetime.utcnow() + timedelta(hours=8)).date())
                         if ext:
                             added = 0
                             for it in ext:
