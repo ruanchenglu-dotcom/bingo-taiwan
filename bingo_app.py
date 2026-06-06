@@ -515,7 +515,7 @@ if st.button("🚀 CHẠY PHÂN TÍCH TOÀN DIỆN", type="primary", use_contain
 
 if st.session_state['predict_data'] or not df_history.empty:
     st.markdown("---")
-    rt1, rt2, rt3 = st.tabs(["📉 PHÂN TÍCH Z-SCORE", "🎯 DỰ ĐOÁN & QUẢN LÝ VỐN", "⚖️ TÀI XỈU / CHẴN LẺ"])
+    rt1, rt2, rt3, rt4 = st.tabs(["📉 PHÂN TÍCH Z-SCORE", "🎯 DỰ ĐOÁN & QUẢN LÝ VỐN", "⚖️ TÀI XỈU / CHẴN LẺ", "📜 LỊCH SỬ"])
     
     # --- TAB Z-SCORE ---
     with rt1:
@@ -629,15 +629,16 @@ if st.session_state['predict_data'] or not df_history.empty:
         else:
             st.info("Chưa có đủ dữ liệu để thống kê.")
 
-st.markdown("---")
-with st.expander("LỊCH SỬ", expanded=True):
-    col_del1, col_del2 = st.columns(2)
-    with col_del1:
-        if st.button("Xóa kỳ cuối", use_container_width=True): delete_last_row(); st.rerun()
-    with col_del2:
-        if st.button("Xóa tất cả", type="primary", use_container_width=True): 
-            cols = ['draw_id', 'time', 'super_num'] + [f'num_{i}' for i in range(1, 21)]
-            st.session_state['df_history'] = pd.DataFrame(columns=cols)
-            save_history(st.session_state['df_history'])
-            st.rerun()
-    if not df_history.empty: st.dataframe(df_history, use_container_width=True, hide_index=True)
+    # --- TAB LỊCH SỬ ---
+    with rt4:
+        st.subheader("📜 Dữ liệu Lịch sử các kỳ")
+        col_del1, col_del2 = st.columns(2)
+        with col_del1:
+            if st.button("Xóa kỳ cuối", use_container_width=True): delete_last_row(); st.rerun()
+        with col_del2:
+            if st.button("Xóa tất cả", type="primary", use_container_width=True): 
+                cols = ['draw_id', 'time', 'super_num'] + [f'num_{i}' for i in range(1, 21)]
+                st.session_state['df_history'] = pd.DataFrame(columns=cols)
+                save_history(st.session_state['df_history'])
+                st.rerun()
+        if not df_history.empty: st.dataframe(df_history, use_container_width=True, hide_index=True)
