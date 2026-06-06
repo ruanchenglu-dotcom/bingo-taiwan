@@ -520,9 +520,8 @@ if st.session_state['predict_data'] or not df_history.empty:
             if st.button("Xóa kỳ cuối", use_container_width=True): delete_last_row(); st.rerun()
         with col_del2:
             if st.button("Xóa tất cả", type="primary", use_container_width=True): 
-                cols = ['draw_id', 'time', 'super_num'] + [f'num_{i}' for i in range(1, 21)]
-                st.session_state['df_history'] = pd.DataFrame(columns=cols)
-                save_history(st.session_state['df_history'])
+                delete_all_data()
+                st.session_state['df_history'] = load_data()
                 st.rerun()
         if not df_history.empty: st.dataframe(df_history, use_container_width=True, hide_index=True)
         
