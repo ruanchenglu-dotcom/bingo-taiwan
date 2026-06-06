@@ -42,7 +42,7 @@ DATA_FILE = 'bingo_history.csv'
 if 'selected_nums' not in st.session_state: st.session_state['selected_nums'] = [] 
 if 'predict_data' not in st.session_state: st.session_state['predict_data'] = None 
 if 'z_score_data' not in st.session_state: st.session_state['z_score_data'] = None # New State
-if 'selected_algo' not in st.session_state: st.session_state['selected_algo'] = "🔮 AI Master (Tổng Hợp)"
+if 'selected_algo' not in st.session_state: st.session_state['selected_algo'] = "🔮 Ensemble AI (Đa Mô Hình)"
 if 'paste_key_id' not in st.session_state: st.session_state['paste_key_id'] = 0
 
 def load_data():
@@ -230,8 +230,97 @@ def backtest_accuracy(df, strategy, mode_count):
         wins += hits / mode_count
     return wins / test_draws
 
+def calculate_optimal_frame(df, fnums):
+    if len(df) < 20: return "Cần thêm dữ liệu lịch sử (tối thiểu 20 kỳ) để tính toán nhịp gan."
+    avg_gaps, current_gaps = [], []
+    for n in fnums:
+        apps = []
+        for i in range(len(df)):
+            row = df.iloc[i]
+            if n in [row[f'num_{j}'] for j in range(1, 21)]: apps.append(i)
+        if len(apps) >= 2:
+            gaps = [apps[k] - apps[k+1] for k in range(len(apps)-1)]
+            avg_gaps.append(np.mean(gaps))
+        else:
+            avg_gaps.append(4)
+        current_gaps.append(apps[0] if apps else len(df))
+
+    avg_cycle = np.mean(avg_gaps)
+    avg_curr = np.mean(current_gaps)
+    if avg_curr >= avg_cycle * 1.5:
+        frame, status = 3, "Rất chín (Đã vượt chu kỳ max)"
+    elif avg_curr >= avg_cycle:
+        frame, status = 2, "Đang vào điểm rơi"
+    else:
+        frame = int(max(1, round(avg_cycle - avg_curr)))
+        if frame > 5: frame = 5
+        status = "Đang trong chu kỳ đợi"
+    return f"📊 **Chiến thuật Nuôi Khung:** Trạng thái **{status}**. Khuyên bạn nên **vào tiền nuôi gấp thếp trong {frame} kỳ tiếp theo** để tối ưu xác suất nổ."
+
+def train_and_predict_ml(df):
+    if len(df) < 30: return []
+    try:
+        from sklearn.ensemble import RandomForestClassifier
+        X, y_dict = [], {n: [] for n in range(1, 81)}
+        for i in range(len(df) - 6):
+            features = []
+            for j in range(1, 6):
+                nums = [df.iloc[i+j][f'num_{k}'] for k in range(1, 21)]
+                for n in range(1, 81): features.append(1 if n in nums else 0)
+            X.append(features)
+            current_nums = [df.iloc[i][f'num_{k}'] for k in range(1, 21)]
+            for n in range(1, 81): y_dict[n].append(1 if n in current_nums else 0)
+                
+        next_features = []
+        for j in range(0, 5):
+            nums = [df.iloc[j][f'num_{k}'] for k in range(1, 21)]
+            for n in range(1, 81): next_features.append(1 if n in nums else 0)
+            
+        scores = {}
+        rf = RandomForestClassifier(n_estimators=10, max_depth=5, random_state=42)
+        for n in range(1, 81):
+            if sum(y_dict[n]) > 2:
+                rf.fit(X, y_dict[n])
+                prob = rf.predict_proba([next_features])[0]
+                scores[n] = prob[1] if len(prob) > 1 else 0
+            else:
+                scores[n] = 0
+        return sorted(scores, key=scores.get, reverse=True)
+    except:
+        return []
+
+def run_ensemble_prediction(df):
+    if len(df) < 30: return run_prediction(df, "🔮 AI Master")
+    ai_scores = {n: 0 for n in range(1, 81)}
+    for i, n in enumerate(run_prediction(df, "🔮 AI Master")): ai_scores[n] = 80 - i
+    ml_scores = {n: 0 for n in range(1, 81)}
+    ml_preds = train_and_predict_ml(df)
+    if ml_preds:
+        for i, n in enumerate(ml_preds): ml_scores[n] = 80 - i
+    markov_scores = {n: 0 for n in range(1, 81)}
+    last_nums = [df.iloc[0][f'num_{k}'] for k in range(1, 21)]
+    transitions = {n: {m: 0 for m in range(1, 81)} for n in range(1, 81)}
+    for i in range(min(100, len(df)-1)):
+        curr = [df.iloc[i][f'num_{k}'] for k in range(1, 21)]
+        prev = [df.iloc[i+1][f'num_{k}'] for k in range(1, 21)]
+        for p in prev:
+            for c in curr: transitions[p][c] += 1
+    for n in range(1, 81): markov_scores[n] = sum([transitions[p][n] for p in last_nums])
+    max_m = max(markov_scores.values()) if max(markov_scores.values()) > 0 else 1
+    final_scores = {}
+    for n in range(1, 81):
+        final_scores[n] = (ai_scores[n]/80)*0.4 + (ml_scores[n]/80)*0.4 + (markov_scores[n]/max_m)*0.2
+    return sorted(final_scores, key=final_scores.get, reverse=True)
+
 def run_prediction(df, strategy):
     if df.empty: return []
+    if strategy == "🤖 AI / Machine Learning":
+        ml_pred = train_and_predict_ml(df)
+        if ml_pred: return ml_pred
+        strategy = "🔮 AI Master"
+    elif strategy == "🔮 Ensemble AI (Đa Mô Hình)":
+        return run_ensemble_prediction(df)
+        
     recent = df.head(10)
     all_nums = []
     for i in range(1, 21): all_nums.extend(recent[f'num_{i}'].tolist())
@@ -239,7 +328,6 @@ def run_prediction(df, strategy):
     last = [df.iloc[0][f'num_{i}'] for i in range(1, 21)]
     scores = {}
     for n in range(1, 81):
-        # Dùng nhiễu cố định dựa trên 'n' để bỏ tính ngẫu nhiên (tránh loạn kết quả)
         tie_breaker = n * 0.0001
         if strategy == "🔮 AI Master":
             s = freq.get(n, 0) * 1.5
@@ -249,6 +337,7 @@ def run_prediction(df, strategy):
         elif strategy == "🔥 Soi Cầu Nóng": scores[n] = freq.get(n, 0) + tie_breaker
         elif strategy == "❄️ Soi Cầu Lạnh": scores[n] = (freq.max() if not freq.empty else 0 - freq.get(n, 0)) + tie_breaker
         elif strategy == "♻️ Soi Cầu Bệt": scores[n] = (1000 if n in last else 0) + freq.get(n, 0)*0.1 + tie_breaker
+        else: scores[n] = tie_breaker
     return sorted(scores, key=scores.get, reverse=True)
 
 # ==============================================================================
@@ -460,20 +549,23 @@ if st.session_state['predict_data'] or not df_history.empty:
         c1, c2 = st.columns([2, 1])
         with c1:
             st.subheader("KẾT QUẢ DỰ ĐOÁN")
-            algos = ["🔮 AI Master", "🤖 AI / Machine Learning", "🔥 Soi Cầu Nóng", "❄️ Soi Cầu Lạnh", "♻️ Soi Cầu Bệt"]
+            algos = ["🔮 Ensemble AI (Đa Mô Hình)", "🔮 AI Master", "🤖 AI / Machine Learning", "🔥 Soi Cầu Nóng", "❄️ Soi Cầu Lạnh", "♻️ Soi Cầu Bệt"]
             salgo = st.selectbox("Thuật toán:", algos, index=0)
             if salgo != st.session_state['selected_algo']:
                 st.session_state['selected_algo'] = salgo
                 if not df_history.empty: st.session_state['predict_data'] = run_prediction(df_history, salgo); st.rerun()
             
-            modes = {"10 Tinh": 10, "6 Tinh": 6, "1 Tinh": 1}
-            smode = st.selectbox("Dàn:", list(modes.keys()), index=1)
+            modes = {f"{i} Tinh": i for i in range(1, 11)}
+            smode = st.selectbox("Dàn:", list(modes.keys()), index=5)
             
             if st.session_state['predict_data']:
                 fnums = sorted(st.session_state['predict_data'][:modes[smode]])
                 cols = st.columns(5)
                 for i, n in enumerate(fnums): 
                     cols[i%5].markdown(f"<div style='background-color:{'#E74C3C' if n>40 else '#3498DB'}; color:white; padding:10px; border-radius:5px; text-align:center; font-weight:bold; font-size:20px; margin-bottom:5px'>{n:02d}</div>", unsafe_allow_html=True)
+                
+                st.write("")
+                st.info(calculate_optimal_frame(df_history, fnums))
 
         # GỢI Ý ĐI TIỀN KELLY
         with c2:
