@@ -260,31 +260,37 @@ def calculate_optimal_frame(df, fnums):
 def train_and_predict_ml(df):
     if len(df) < 30: return []
     try:
-        from sklearn.ensemble import RandomForestClassifier
-        X, y_dict = [], {n: [] for n in range(1, 81)}
+        from sklearn.tree import DecisionTreeClassifier
+        X, y = [], []
         for i in range(len(df) - 6):
             features = []
             for j in range(1, 6):
                 nums = [df.iloc[i+j][f'num_{k}'] for k in range(1, 21)]
                 for n in range(1, 81): features.append(1 if n in nums else 0)
             X.append(features)
+            
             current_nums = [df.iloc[i][f'num_{k}'] for k in range(1, 21)]
-            for n in range(1, 81): y_dict[n].append(1 if n in current_nums else 0)
+            y_row = [1 if n in current_nums else 0 for n in range(1, 81)]
+            y.append(y_row)
                 
         next_features = []
         for j in range(0, 5):
             nums = [df.iloc[j][f'num_{k}'] for k in range(1, 21)]
             for n in range(1, 81): next_features.append(1 if n in nums else 0)
             
+        rf = DecisionTreeClassifier(max_depth=5, random_state=42)
+        rf.fit(X, y)
+        probs = rf.predict_proba([next_features])
+        
         scores = {}
-        rf = RandomForestClassifier(n_estimators=10, max_depth=5, random_state=42)
         for n in range(1, 81):
-            if sum(y_dict[n]) > 2:
-                rf.fit(X, y_dict[n])
-                prob = rf.predict_proba([next_features])[0]
-                scores[n] = prob[1] if len(prob) > 1 else 0
+            prob_n = probs[n-1][0]
+            # sklearn predict_proba for multioutput returns a list of arrays (one for each output)
+            if len(prob_n) > 1:
+                scores[n] = prob_n[1]
             else:
                 scores[n] = 0
+                
         return sorted(scores, key=scores.get, reverse=True)
     except:
         return []
