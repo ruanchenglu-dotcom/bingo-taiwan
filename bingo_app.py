@@ -120,22 +120,44 @@ def fetch_auzo_bingo():
     try:
         import requests
         import re
-        r = requests.get('https://lotto.auzo.tw/bingobingo', headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+        from bs4 import BeautifulSoup
+        today = datetime.now().strftime('%Y%m%d')
+        url = f'https://lotto.auzo.tw/bingobingo/list_{today}.html'
+        r = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=10)
+        soup = BeautifulSoup(r.text, 'html.parser')
+        rows = soup.find_all('tr', class_='bingo_row')
+        results = []
+        for row in rows:
+            period_td = row.find('td', class_='BPeriod')
+            if not period_td: continue
+            b_tag = period_td.find('b')
+            if not b_tag: continue
+            draw_id_str = b_tag.text.strip()
+            if not re.match(r'11[45]\d{6}', draw_id_str): continue
+            draw_id = int(draw_id_str)
+            
+            tds = row.find_all('td')
+            if len(tds) < 2: continue
+            divs = tds[1].find_all('div')
+            nums = []
+            super_num = None
+            for div in divs:
+                n = div.text.strip()
+                if n.isdigit():
+                    val = int(n)
+                    nums.append(val)
+                    cls = div.get('class', [''])[0]
+                    if 's' in cls:
+                        super_num = val
+            if len(nums) >= 15:
+                if super_num is None: super_num = nums[-1]
+                results.append({'draw_id': draw_id, 'time': datetime.now(), 'nums': nums, 'super_num': super_num})
         
-        # Tìm Draw ID (114xxxxxx hoặc 115xxxxxx)
-        draw_match = re.search(r'(11[45]\d{6})', r.text)
-        if not draw_match:
-            return None, "Không tìm thấy mã kỳ mới nhất"
-        draw_id = int(draw_match.group(1))
-        
-        # Dùng Regex lấy 20 số đầu tiên trong class BingoLB
-        str_nums = re.findall(r'class=["\']BingoLB(?:Super)?["\']>(\d{1,2})</td>', r.text, re.IGNORECASE)
-        nums = sorted(list(set([int(x) for x in str_nums[:20]])))
-        
-        if len(nums) >= 15:
-            return {'draw_id': draw_id, 'time': datetime.now(), 'nums': nums, 'super_num': nums[-1]}, None
+        if len(results) > 0:
+            results.sort(key=lambda x: x['draw_id'])
+            return results, None
         else:
-            return None, f"Lỗi trích xuất số. Tìm thấy: {nums}"
+            return None, "Không tìm thấy mã kỳ mới nhất hôm nay"
     except Exception as e:
         return None, str(e)
 
@@ -358,19 +380,25 @@ with st.container(border=True):
         st.write("Tự động lấy kết quả kỳ mới nhất từ web thống kê bên thứ ba.")
         if st.button("🌐 LẤY KẾT QUẢ MỚI NHẤT", type="primary", use_container_width=True):
             with st.spinner("Đang tải dữ liệu..."):
-                res, err = fetch_auzo_bingo()
+                res_list, err = fetch_auzo_bingo()
                 if err:
                     st.error(f"Lỗi: {err}")
-                elif res:
-                    if df_history.empty or res['draw_id'] not in df_history['draw_id'].values:
-                        r = {'draw_id': res['draw_id'], 'time': res['time'], 'super_num': res['super_num']}
-                        for i, v in enumerate(res['nums']): r[f'num_{i+1}'] = v
-                        df_history = pd.concat([pd.DataFrame([r]), df_history], ignore_index=True)
-                        process_new_draw_and_notify(df_history, 1, res['draw_id'])
-                        st.success(f"Đã cập nhật thành công kỳ {res['draw_id']}!")
+                elif res_list:
+                    added = 0
+                    last_id = None
+                    for res in res_list:
+                        if df_history.empty or res['draw_id'] not in df_history['draw_id'].values:
+                            r = {'draw_id': res['draw_id'], 'time': res['time'], 'super_num': res['super_num']}
+                            for i, v in enumerate(res['nums']): r[f'num_{i+1}'] = v
+                            df_history = pd.concat([pd.DataFrame([r]), df_history], ignore_index=True)
+                            added += 1
+                            last_id = res['draw_id']
+                    if added > 0:
+                        process_new_draw_and_notify(df_history, added, last_id)
+                        st.success(f"Đã cập nhật thành công {added} kỳ mới nhất!")
                         st.rerun()
                     else:
-                        st.warning(f"Kỳ {res['draw_id']} đã có trong hệ thống!")
+                        st.warning("Tất cả các kỳ hôm nay đều đã có trong hệ thống!")
 
 st.write(""); st.markdown("### 📊 PHÂN TÍCH ĐỊNH LƯỢNG (QUANTITATIVE)")
 
@@ -494,5 +522,13 @@ if st.session_state['predict_data'] or not df_history.empty:
 
 st.markdown("---")
 with st.expander("LỊCH SỬ"):
-    if st.button("Xóa kỳ cuối"): delete_last_row(); st.rerun()
+    col_del1, col_del2 = st.columns(2)
+    with col_del1:
+        if st.button("Xóa kỳ cuối", use_container_width=True): delete_last_row(); st.rerun()
+    with col_del2:
+        if st.button("Xóa tất cả", type="primary", use_container_width=True): 
+            cols = ['draw_id', 'time', 'super_num'] + [f'num_{i}' for i in range(1, 21)]
+            st.session_state['df_history'] = pd.DataFrame(columns=cols)
+            save_history(st.session_state['df_history'])
+            st.rerun()
     if not df_history.empty: st.dataframe(df_history, use_container_width=True, hide_index=True)
